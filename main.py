@@ -311,13 +311,24 @@ async def stop_recording(guild: discord.Guild):
 
 
 def finished_callback(sink: MP3Sink, voice_channel: discord.VoiceChannel, *args):
-    """録音完了時のコールバック"""
+    """録音完了時のコールバック（修正版）"""
     logger.info(f"Recording finished callback for {voice_channel.name}")
-    asyncio.create_task(process_recording(sink, voice_channel))
+    
+    # メインのイベントループにタスクをスケジュール
+    loop = bot.loop
+    if loop and not loop.is_closed():
+        try:
+            # 別スレッドからメインループにコルーチンを安全に実行
+            future = asyncio.run_coroutine_threadsafe(process_recording(sink, voice_channel), loop)
+            logger.info("Successfully scheduled recording processing task")
+        except Exception as e:
+            logger.error(f"Failed to schedule recording processing: {e}")
+    else:
+        logger.error("Bot event loop is not available")
 
 
 async def process_recording(sink: MP3Sink, voice_channel: discord.VoiceChannel):
-    """録音データの処理"""
+    """録音データの処理（修正版）"""
     try:
         guild_id = voice_channel.guild.id
         logger.info(f"Processing recording for {voice_channel.name}")
@@ -327,8 +338,11 @@ async def process_recording(sink: MP3Sink, voice_channel: discord.VoiceChannel):
             recording_info = recording_states.pop(guild_id)
             vc = recording_info['voice_client']
             if vc:
-                await vc.disconnect()
-                logger.info(f"Disconnected from voice channel {voice_channel.name}")
+                try:
+                    await vc.disconnect()
+                    logger.info(f"Disconnected from voice channel {voice_channel.name}")
+                except Exception as e:
+                    logger.warning(f"Failed to disconnect from voice channel: {e}")
         
         # 音声データが空の場合はスキップ
         if not sink.audio_data:
@@ -340,7 +354,9 @@ async def process_recording(sink: MP3Sink, voice_channel: discord.VoiceChannel):
         user_count = 0
         for user_id, audio_data in sink.audio_data.items():
             user_count += 1
-            combined_audio += audio_data.getvalue()
+            audio_bytes = audio_data.getvalue()
+            combined_audio += audio_bytes
+            logger.debug(f"User {user_id}: {len(audio_bytes)} bytes")
         
         logger.info(f"Combined audio from {user_count} users, total size: {len(combined_audio)} bytes")
         
@@ -354,13 +370,18 @@ async def process_recording(sink: MP3Sink, voice_channel: discord.VoiceChannel):
             tmp_file_path = tmp_file.name
         
         try:
-            logger.info(f"Processing audio file: {tmp_file_path}")
+            logger.info(f"Processing audio file: {tmp_file_path} ({len(combined_audio)} bytes)")
             
             # 文字起こし実行
             transcription = await gemini_client.transcribe_audio(tmp_file_path)
             
             if not transcription:
                 logger.warning("Transcription failed or empty")
+                return
+            elif transcription.startswith("❌") or transcription.startswith("⚠️"):
+                logger.warning(f"Transcription returned error: {transcription}")
+                # エラーメッセージでも結果として送信
+                await send_transcription_result(voice_channel.guild, transcription, voice_channel.name)
                 return
             
             logger.info("Transcription completed, enhancing text...")
@@ -380,7 +401,7 @@ async def process_recording(sink: MP3Sink, voice_channel: discord.VoiceChannel):
                 logger.error(f"Failed to delete temp file: {e}")
         
     except Exception as e:
-        logger.error(f"Failed to process recording: {e}")
+        logger.error(f"Failed to process recording: {e}", exc_info=True)
 
 
 async def send_transcription_result(guild: discord.Guild, text: str, voice_channel_name: str):
@@ -443,4 +464,3 @@ if __name__ == "__main__":
         logger.info("Bot stopped by user")
     except Exception as e:
         logger.error(f"Failed to start bot: {e}")
-
