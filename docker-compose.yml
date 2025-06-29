@@ -1,4 +1,4 @@
-
+version: '3.9'
 
 services:
   discord-transcription-bot:
@@ -6,43 +6,59 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: discord-transcription-bot
-    restart: unless-stopped
-
-    # Environment variables from .env file
+    
+    # 環境変数ファイルを読み込み
     env_file:
       - .env
-
-    # Volume mounts for persistent data
+    
+    # 環境変数の直接指定（オプション）
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=Asia/Tokyo
+    
+    # ボリュームマウント（設定ファイルの永続化）
     volumes:
-      - ./data:/app/data
+      - ./channels.json:/app/channels.json
       - ./logs:/app/logs
-
-    # Resource limits
+      - ./temp:/app/temp
+    
+    # リソース制限
     deploy:
       resources:
         limits:
-          memory: 1G
-          cpus: '0.5'
+          cpus: '0.50'          # CPU使用率を50%に制限
+          memory: 1G            # メモリ使用量を1GBに制限
         reservations:
-          memory: 512M
-          cpus: '0.25'
-
-    # Logging configuration
+          cpus: '0.25'          # 最低限のCPU予約
+          memory: 512M          # 最低限のメモリ予約
+    
+    # 再起動ポリシー
+    restart: unless-stopped
+    
+    # ログ設定
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
+    
+    # ネットワーク設定（外部接続が必要）
+    network_mode: "bridge"
+    
+    # ヘルスチェック
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import sys; sys.exit(0)'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
-    # Network (optional)
-    networks:
-      - bot-network
-
-networks:
-  bot-network:
-    driver: bridge
-
-# Optional: Add volume for shared data
+# ボリューム定義（データ永続化用）
 volumes:
-  bot-data:
+  bot_data:
     driver: local
+
+# ネットワーク定義（必要に応じて）
+networks:
+  bot_network:
+    driver: bridge
