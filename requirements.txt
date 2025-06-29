@@ -1,28 +1,4 @@
-pydantic-settings
-# Discord bot dependencies
-
 py-cord[voice]==2.6.1
-
-# Google Gemini API
 google-genai
-
-# Configuration management
-pydantic[dotenv]==2.9.2
-
-# Encryption
+pydantic-settings
 cryptography==43.0.1
-
-# Audio processing (automatically installed with py-cord[voice])
-PyNaCl>=1.5.0
-pydub>=0.25.1
-
-# HTTP client (dependency)
-aiohttp>=3.8.0
-
-# Optional: Performance improvements
-msgspec>=0.18.0
-
-# Development dependencies (optional)
-# pytest>=7.0.0
-# black>=22.0.0
-# flake8>=5.0.0
