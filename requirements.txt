@@ -4,7 +4,7 @@ pydantic-settings
 py-cord[voice]==2.6.1
 
 # Google Gemini API
-google-generativeai>=0.3.0
+google-genai
 
 # Configuration management
 pydantic[dotenv]==2.9.2
