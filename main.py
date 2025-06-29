@@ -29,6 +29,7 @@ intents.message_content = True
 intents.voice_states = True
 intents.guilds = True
 
+# Bot初期化（修正版）
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Gemini クライアント初期化
@@ -72,6 +73,13 @@ async def on_ready():
         logger.error(f"Failed to sync commands: {e}")
 
 
+@bot.event
+async def setup_hook():
+    """Bot起動時の初期化処理"""
+    logger.info("Bot setup hook called")
+
+
+# スラッシュコマンド定義（修正版）
 @bot.tree.command(name="set_voice_category", description="録音対象のボイスチャンネルカテゴリを設定")
 async def set_voice_category(interaction: discord.Interaction, category: discord.CategoryChannel):
     """ボイスカテゴリ設定"""
@@ -403,3 +411,4 @@ if __name__ == "__main__":
         logger.info("Bot stopped by user")
     except Exception as e:
         logger.error(f"Failed to start bot: {e}")
+
