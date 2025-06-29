@@ -1,12 +1,11 @@
-# Environment files
+# 環境設定ファイル
 .env
-.env.local
-.env.*.local
+*.env
+.env.*
 
-# Bot configuration files
+# 暗号化キー
+encryption.key
 channels.json
-config.key
-*.key
 
 # Python
 __pycache__/
@@ -26,21 +25,19 @@ parts/
 sdist/
 var/
 wheels/
-pip-wheel-metadata/
-share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
 MANIFEST
 
-# Virtual environments
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
+# ログファイル
+*.log
+logs/
+
+# 一時ファイル
+temp/
+tmp/
+*.tmp
 
 # IDEs
 .vscode/
@@ -58,46 +55,6 @@ venv.bak/
 ehthumbs.db
 Thumbs.db
 
-# Logs
-*.log
-logs/
-log/
-
-# Audio files
-*.mp3
-*.wav
-*.m4a
-*.ogg
-*.webm
-
-# Temporary files
-temp/
-tmp/
-*.tmp
-*.temp
-
-# Backup files
-*_backup_*
-backup_*
-*.backup
-
 # Docker
 .dockerignore
 
-# Coverage reports
-htmlcov/
-.tox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-.pytest_cache/
-
-# Data directories
-data/
-transcripts/
-recordings/
