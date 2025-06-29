@@ -158,3 +158,4 @@ class GeminiClient:
             logger.error("Connection test error: %s", e)
             return False
 
+
