@@ -14,38 +14,64 @@ class ConfigManager:
     def __init__(self, config_file: str = "channels.json", key_file: str = "encryption.key"):
         self.config_file = Path(config_file)
         self.key_file = Path(key_file)
+        
+        # ディレクトリが存在する場合は削除
+        self._cleanup_directories()
+        
         self.fernet = self._load_or_create_key()
         self.data = self._load_config()
+    
+    def _cleanup_directories(self):
+        """ディレクトリが誤って作成されている場合の修正"""
+        for file_path in [self.config_file, self.key_file]:
+            if file_path.exists() and file_path.is_dir():
+                logger.warning(f"ディレクトリが見つかりました。削除します: {file_path}")
+                try:
+                    import shutil
+                    shutil.rmtree(file_path)
+                except Exception as e:
+                    logger.error(f"ディレクトリ削除エラー: {e}")
     
     def _load_or_create_key(self) -> Fernet:
         """暗号化キーの読み込みまたは生成"""
         try:
-            if self.key_file.exists():
+            if self.key_file.exists() and self.key_file.is_file():
                 with open(self.key_file, 'rb') as f:
-                    key = f.read()
-                logger.info("既存の暗号化キーを読み込みました")
+                    key_data = f.read()
+                if key_data:  # ファイルが空でない場合
+                    key = key_data
+                    logger.info("既存の暗号化キーを読み込みました")
+                else:
+                    # 空ファイルの場合は新しいキーを生成
+                    key = Fernet.generate_key()
+                    with open(self.key_file, 'wb') as f:
+                        f.write(key)
+                    logger.info("空ファイルに新しい暗号化キーを生成しました")
             else:
                 key = Fernet.generate_key()
                 with open(self.key_file, 'wb') as f:
                     f.write(key)
-                # ファイル権限を制限
                 os.chmod(self.key_file, 0o600)
                 logger.info("新しい暗号化キーを生成しました")
             
             return Fernet(key)
         except Exception as e:
             logger.error(f"暗号化キーの処理エラー: {e}")
-            raise
+            # フォールバック：新しいキーを生成
+            key = Fernet.generate_key()
+            try:
+                with open(self.key_file, 'wb') as f:
+                    f.write(key)
+                logger.info("フォールバックで新しいキーを生成しました")
+                return Fernet(key)
+            except Exception as fallback_error:
+                logger.error(f"フォールバックキー生成も失敗: {fallback_error}")
+                raise
     
     def _load_config(self) -> Dict[int, Dict[str, Any]]:
         """設定ファイルの読み込み"""
         try:
-            if not self.config_file.exists():
-                return {}
-            
-            # ファイルがディレクトリの場合はエラー
-            if self.config_file.is_dir():
-                logger.error(f"設定ファイルがディレクトリです: {self.config_file}")
+            if not self.config_file.exists() or self.config_file.is_dir():
                 return {}
             
             with open(self.config_file, 'rb') as f:
@@ -57,7 +83,6 @@ class ConfigManager:
             decrypted_data = self.fernet.decrypt(encrypted_data)
             data = json.loads(decrypted_data.decode('utf-8'))
             
-            # guild_id を int に変換
             return {int(k): v for k, v in data.items()}
             
         except Exception as e:
@@ -67,7 +92,6 @@ class ConfigManager:
     def _save_config(self):
         """設定ファイルの保存"""
         try:
-            # guild_id を str に変換してJSON化
             json_data = {str(k): v for k, v in self.data.items()}
             json_str = json.dumps(json_data, ensure_ascii=False, indent=2)
             encrypted_data = self.fernet.encrypt(json_str.encode('utf-8'))
@@ -75,7 +99,6 @@ class ConfigManager:
             with open(self.config_file, 'wb') as f:
                 f.write(encrypted_data)
             
-            # ファイル権限を制限
             os.chmod(self.config_file, 0o600)
             
         except Exception as e:
@@ -110,4 +133,5 @@ class ConfigManager:
             del self.data[guild_id]
             self._save_config()
             logger.info(f"All settings cleared for guild {guild_id}")
+
 
