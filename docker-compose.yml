@@ -5,27 +5,19 @@ services:
       dockerfile: Dockerfile
     container_name: discord-transcription-bot
     
-    # 環境変数ファイルを読み込み
     env_file:
       - .env
     
-    # 環境変数の直接指定
     environment:
       - PYTHONUNBUFFERED=1
       - TZ=Asia/Tokyo
     
     # ボリュームマウント（修正版）
     volumes:
-      - type: bind
-        source: ./channels.json
-        target: /app/channels.json
-      - type: bind
-        source: ./encryption.key
-        target: /app/encryption.key
       - ./logs:/app/logs
       - ./temp:/app/temp
+      # ファイルマウントを削除し、コンテナ内で自動生成させる
     
-    # リソース制限
     deploy:
       resources:
         limits:
@@ -35,20 +27,18 @@ services:
           cpus: '0.25'
           memory: 512M
     
-    # 再起動ポリシー
     restart: unless-stopped
     
-    # ログ設定
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
     
-    # ヘルスチェック
     healthcheck:
       test: ["CMD-SHELL", "python -c 'import sys; sys.exit(0)'"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
+
