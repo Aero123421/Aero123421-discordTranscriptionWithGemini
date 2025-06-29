@@ -1,60 +1,10 @@
-# 環境設定ファイル
 .env
-*.env
-.env.*
-
-# 暗号化キー
-encryption.key
 channels.json
-
-# Python
+encryption.key
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# ログファイル
-*.log
 logs/
-
-# 一時ファイル
 temp/
-tmp/
-*.tmp
-
-# IDEs
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS
+*.py[cod]
+*.log
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
-
-# Docker
-.dockerignore
 
