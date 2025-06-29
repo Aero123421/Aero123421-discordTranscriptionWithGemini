@@ -1,4 +1,6 @@
+pydantic-settings
 # Discord bot dependencies
+
 py-cord[voice]==2.6.1
 
 # Google Gemini API
