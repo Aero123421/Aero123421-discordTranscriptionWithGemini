@@ -30,14 +30,6 @@ class GeminiClient:
         self.model_name = model_name
         self.thinking_budget = thinking_budget
 
-        # 安全設定（高レベルのみブロック）
-        self.safety_settings = {
-            types.HarmCategory.HARM_CATEGORY_HARASSMENT: types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
-            types.HarmCategory.HARM_CATEGORY_HATE_SPEECH: types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
-            types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
-            types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
-        }
-
         # システム指示
         self.system_instruction = """
 あなたはDiscordのボイスチャット音声を文字起こしする専門AIです。
@@ -80,8 +72,9 @@ class GeminiClient:
             # ファイルアップロード
             uploaded = self.client.files.upload(file=audio_file_path)
 
-            # 生成設定
-            gen_cfg = types.GenerationConfig(
+            # 設定オブジェクト作成（新SDK方式）
+            config = types.GenerateContentConfig(
+                system_instruction=self.system_instruction,
                 temperature=0.1,
                 top_p=0.8,
                 top_k=20,
@@ -89,28 +82,26 @@ class GeminiClient:
                 candidate_count=1,
             )
 
-            # 思考設定
-            thinking_cfg = None
+            # 思考機能設定（2.5 Flash用）
             if self.thinking_budget != 0:
-                thinking_cfg = types.ThinkingConfig(
-                    thinking_budget=(self.thinking_budget if self.thinking_budget > 0 else None)
-                )
+                # 思考予算の設定
+                if self.thinking_budget > 0:
+                    config.thinking_budget = self.thinking_budget
+                # -1 の場合は動的思考（デフォルト）
 
             # 非同期呼び出し
             response = await asyncio.get_event_loop().run_in_executor(
                 None,
                 lambda: self.client.models.generate_content(
                     model=self.model_name,
-                    contents=[self.system_instruction, uploaded],
-                    generation_config=gen_cfg,
-                    thinking_config=thinking_cfg,
-                    safety_settings=self.safety_settings,
+                    contents=[uploaded],
+                    config=config,  # 新SDK方式：configで設定を渡す
                 )
             )
 
             # アップロードファイル削除
             try:
-                genai.delete_file(uploaded.name)
+                self.client.files.delete(name=uploaded.name)
             except Exception:
                 pass
 
@@ -150,14 +141,17 @@ class GeminiClient:
 - 誤字脱字修正
 - 不要な繰り返し除去
 """
-            gen_cfg = types.GenerationConfig(temperature=0.3, max_output_tokens=4096)
+            config = types.GenerateContentConfig(
+                temperature=0.3, 
+                max_output_tokens=4096
+            )
+            
             response = await asyncio.get_event_loop().run_in_executor(
                 None,
                 lambda: self.client.models.generate_content(
                     model=self.model_name,
                     contents=prompt,
-                    generation_config=gen_cfg,
-                    safety_settings=self.safety_settings,
+                    config=config,  # 新SDK方式
                 )
             )
             return response.text.strip() if response.text else raw
@@ -170,13 +164,12 @@ class GeminiClient:
         モデル情報取得
         """
         try:
-            info = self.client.get_model(self.model_name)
+            info = self.client.models.get(name=self.model_name)
             return {
                 "name": info.name,
-                "description": info.description,
-                "input_token_limit": info.input_token_limit,
-                "output_token_limit": info.output_token_limit,
-                "supported_methods": info.supported_generation_methods,
+                "description": getattr(info, 'description', 'N/A'),
+                "input_token_limit": getattr(info, 'input_token_limit', 'N/A'),
+                "output_token_limit": getattr(info, 'output_token_limit', 'N/A'),
             }
         except Exception as e:
             logger.error("Model info error: %s", e)
@@ -187,13 +180,13 @@ class GeminiClient:
         API 接続テスト
         """
         try:
-            gen_cfg = types.GenerationConfig(max_output_tokens=10)
+            config = types.GenerateContentConfig(max_output_tokens=10)
             response = await asyncio.get_event_loop().run_in_executor(
                 None,
                 lambda: self.client.models.generate_content(
                     model=self.model_name,
                     contents="こんにちは",
-                    generation_config=gen_cfg,
+                    config=config,  # 新SDK方式
                 )
             )
             ok = bool(response.text)
