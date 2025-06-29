@@ -133,5 +133,3 @@ class ConfigManager:
             del self.data[guild_id]
             self._save_config()
             logger.info(f"All settings cleared for guild {guild_id}")
-
-
