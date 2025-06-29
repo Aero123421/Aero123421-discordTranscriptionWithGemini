@@ -29,7 +29,7 @@ intents.message_content = True
 intents.voice_states = True
 intents.guilds = True
 
-# Bot初期化（修正版）
+# Bot初期化
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Gemini クライアント初期化
@@ -43,7 +43,7 @@ gemini_client = GeminiClient(
 config_manager = ConfigManager()
 
 # 録音状態管理
-recording_states: Dict[int, Dict] = {}
+recording_states: Dict[int, Dict] = {}  # guild_id -> recording_info
 
 
 class MP3Sink(discord.sinks.MP3Sink):
@@ -55,15 +55,34 @@ class MP3Sink(discord.sinks.MP3Sink):
 
 @bot.event
 async def on_ready():
-    """Bot起動時の処理"""
+    """Bot起動時の処理（修正版）"""
     logger.info(f"Logged in as {bot.user} (ID: {bot.user.id})")
     logger.info("------")
     
-    # Gemini API接続テスト
-    if await gemini_client.test_connection():
-        logger.info("Gemini API connection test passed")
+    # 環境変数確認
+    api_key = config.GEMINI_API_KEY
+    if api_key:
+        logger.info("Gemini API key loaded: %s***", api_key[:8] if len(api_key) >= 8 else "***")
     else:
-        logger.error("Gemini API connection test failed")
+        logger.error("Gemini API key not found!")
+        return
+    
+    # Gemini API接続テスト
+    logger.info("Starting Gemini API connection test...")
+    try:
+        test_result = await gemini_client.test_connection()
+        if test_result:
+            logger.info("✅ Gemini API connection test passed")
+        else:
+            logger.error("❌ Gemini API connection test failed")
+    except Exception as e:
+        logger.error("❌ Connection test exception: %s", e)
+
+
+@bot.event
+async def setup_hook():
+    """Bot起動時の初期化処理"""
+    logger.info("Bot setup hook called")
 
 
 # スラッシュコマンド定義（修正版：@bot.slash_command を使用）
@@ -238,7 +257,10 @@ async def start_recording(guild: discord.Guild, voice_channel: discord.VoiceChan
         
         # 既に録音中の場合はスキップ
         if guild_id in recording_states:
+            logger.info(f"Recording already in progress for guild {guild_id}")
             return
+        
+        logger.info(f"Starting recording in {voice_channel.name} (Guild: {guild.name})")
         
         # ボイスチャンネルに接続
         vc = await voice_channel.connect()
@@ -255,13 +277,19 @@ async def start_recording(guild: discord.Guild, voice_channel: discord.VoiceChan
             'start_time': asyncio.get_event_loop().time()
         }
         
-        logger.info(f"Recording started in {voice_channel.name} (Guild: {guild.name})")
+        logger.info(f"Recording started successfully in {voice_channel.name}")
         
     except Exception as e:
         logger.error(f"Failed to start recording: {e}")
         # 接続に失敗した場合はクリーンアップ
         if guild_id in recording_states:
             del recording_states[guild_id]
+        # 接続エラーの場合は切断を試行
+        try:
+            if 'vc' in locals() and vc:
+                await vc.disconnect()
+        except Exception:
+            pass
 
 
 async def stop_recording(guild: discord.Guild):
@@ -270,15 +298,17 @@ async def stop_recording(guild: discord.Guild):
         guild_id = guild.id
         
         if guild_id not in recording_states:
+            logger.info(f"No active recording to stop for guild {guild_id}")
             return
         
         recording_info = recording_states[guild_id]
         vc = recording_info['voice_client']
         
         if vc and vc.recording:
+            logger.info(f"Stopping recording in guild {guild.name}")
             vc.stop_recording()
-        
-        logger.info(f"Recording stopped in guild {guild.name}")
+        else:
+            logger.warning(f"Voice client not recording in guild {guild.name}")
         
     except Exception as e:
         logger.error(f"Failed to stop recording: {e}")
@@ -286,6 +316,7 @@ async def stop_recording(guild: discord.Guild):
 
 def finished_callback(sink: MP3Sink, voice_channel: discord.VoiceChannel, *args):
     """録音完了時のコールバック"""
+    logger.info(f"Recording finished callback for {voice_channel.name}")
     asyncio.create_task(process_recording(sink, voice_channel))
 
 
@@ -293,6 +324,7 @@ async def process_recording(sink: MP3Sink, voice_channel: discord.VoiceChannel):
     """録音データの処理"""
     try:
         guild_id = voice_channel.guild.id
+        logger.info(f"Processing recording for {voice_channel.name}")
         
         # 録音状態をクリーンアップ
         if guild_id in recording_states:
@@ -300,6 +332,7 @@ async def process_recording(sink: MP3Sink, voice_channel: discord.VoiceChannel):
             vc = recording_info['voice_client']
             if vc:
                 await vc.disconnect()
+                logger.info(f"Disconnected from voice channel {voice_channel.name}")
         
         # 音声データが空の場合はスキップ
         if not sink.audio_data:
@@ -308,8 +341,12 @@ async def process_recording(sink: MP3Sink, voice_channel: discord.VoiceChannel):
         
         # 音声データを結合
         combined_audio = b""
+        user_count = 0
         for user_id, audio_data in sink.audio_data.items():
+            user_count += 1
             combined_audio += audio_data.getvalue()
+        
+        logger.info(f"Combined audio from {user_count} users, total size: {len(combined_audio)} bytes")
         
         if not combined_audio:
             logger.info("Combined audio is empty, skipping transcription")
@@ -330,6 +367,8 @@ async def process_recording(sink: MP3Sink, voice_channel: discord.VoiceChannel):
                 logger.warning("Transcription failed or empty")
                 return
             
+            logger.info("Transcription completed, enhancing text...")
+            
             # テキスト整形
             enhanced_text = await gemini_client.enhance_transcription(transcription)
             
@@ -340,6 +379,7 @@ async def process_recording(sink: MP3Sink, voice_channel: discord.VoiceChannel):
             # 一時ファイルを削除
             try:
                 os.unlink(tmp_file_path)
+                logger.info(f"Deleted temporary file: {tmp_file_path}")
             except Exception as e:
                 logger.error(f"Failed to delete temp file: {e}")
         
@@ -391,11 +431,19 @@ async def on_error(event, *args, **kwargs):
     logger.error(f"An error occurred in event {event}", exc_info=True)
 
 
+@bot.event
+async def on_application_command_error(ctx: discord.ApplicationContext, error: discord.DiscordException):
+    """スラッシュコマンドエラーハンドリング"""
+    logger.error(f"Application command error in {ctx.command}: {error}")
+    if not ctx.response.is_done():
+        await ctx.respond(f"❌ コマンド実行中にエラーが発生しました: {error}", ephemeral=True)
+
+
 if __name__ == "__main__":
     try:
+        logger.info("Starting Discord Transcription Bot...")
         bot.run(config.DISCORD_TOKEN)
     except KeyboardInterrupt:
         logger.info("Bot stopped by user")
     except Exception as e:
         logger.error(f"Failed to start bot: {e}")
-
