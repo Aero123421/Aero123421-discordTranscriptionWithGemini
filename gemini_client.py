@@ -1,253 +1,204 @@
 import asyncio
+import io
 import logging
-from pathlib import Path
-from typing import Optional
-import tempfile
 import os
+import tempfile
 
-try:
-    import google.generativeai as genai
-    from google.generativeai.types import HarmCategory, HarmBlockThreshold
-except ImportError:
-    raise ImportError("google-generativeai が必要です。pip install google-generativeai でインストールしてください。")
+from google import genai
+from google.genai import types
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 class GeminiClient:
-    """Google Gemini 2.5 Flash APIクライアント"""
+    """Google Gemini 2.5 Flash API クライアント"""
 
-    def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash", thinking_budget: int = -1):
+    def __init__(
+        self,
+        api_key: str,
+        model_name: str = "gemini-2.5-flash",
+        thinking_budget: int = -1,
+    ):
         """
-        Gemini APIクライアントの初期化
-
         Args:
-            api_key: Google AI APIキー
-            model_name: 使用するモデル名 (gemini-2.5-flash)
-            thinking_budget: 思考予算 (0=思考オフ, -1=動的思考, 正の整数=トークン数)
+            api_key: Google Gemini API キー
+            model_name: 使用モデル名（例: gemini-2.5-flash）
+            thinking_budget: 思考予算（0=思考オフ, -1=動的思考, 正の整数=固定トークン数）
         """
-        self.api_key = api_key
+        # API クライアント初期化
+        self.client = genai.Client(api_key=api_key)
         self.model_name = model_name
         self.thinking_budget = thinking_budget
 
-        # Gemini API初期化
-        genai.configure(api_key=api_key)
-
-        # 安全設定（音声転写用に緩和）
+        # 安全設定（高レベルのみブロック）
         self.safety_settings = {
-            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
-            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_ONLY_HIGH,
-            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
-            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+            types.HarmCategory.HARM_CATEGORY_HARASSMENT: types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
+            types.HarmCategory.HARM_CATEGORY_HATE_SPEECH: types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
+            types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
+            types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
         }
 
-        # モデル初期化
-        self.model = genai.GenerativeModel(
-            model_name=model_name,
-            safety_settings=self.safety_settings,
-            system_instruction=self._get_system_instruction()
-        )
-
-        logger.info(f"Gemini APIクライアント初期化完了: {model_name}")
-
-    def _get_system_instruction(self) -> str:
-        """システム指示の取得"""
-        return """
+        # システム指示
+        self.system_instruction = """
 あなたはDiscordのボイスチャット音声を文字起こしする専門AIです。
 
 【タスク】
-1. 提供された音声ファイルの内容を正確に日本語で文字起こししてください
-2. 話者が複数いる場合は可能な限り区別してください
-3. 会話の流れが自然になるよう整形してください
+1. 提供された音声ファイルを正確に日本語で文字起こししてください
+2. 話者が複数いる場合は「話者A:」「話者B:」のように区別してください
+3. 自然な会話の流れになるよう整形してください
 4. 聞き取れない部分は[聞き取り不能]と記載してください
 
 【出力形式】
 - 読みやすい日本語で出力
-- 話者の切り替わりは改行で区切る
-- 重要な発言やキーワードは**太字**で強調
+- 話者切替は改行で区切る
+- 重要な発言は**太字**で強調
 - 時系列順に整理
-
-【注意事項】
-- 個人情報や機密情報が含まれる場合は適切に配慮
-- 不適切な内容は[内容を適切に修正]として処理
-- 音声品質が悪い場合はその旨を記載
-
-正確で読みやすい文字起こしを心がけてください。
 """
 
-    async def transcribe_audio(self, audio_file_path: str) -> Optional[str]:
-        """
-        音声ファイルの文字起こし
+        logger.info(f"Initialized GeminiClient with model {model_name}")
 
-        Args:
-            audio_file_path: 音声ファイルのパス
+    async def transcribe_audio(self, audio_file_path: str) -> str | None:
+        """
+        音声ファイルを文字起こし
 
         Returns:
-            文字起こし結果のテキスト（失敗時はNone）
+            文字起こしテキスト (失敗時は None or エラーメッセージ)
         """
         try:
             if not os.path.exists(audio_file_path):
-                logger.error(f"音声ファイルが見つかりません: {audio_file_path}")
+                logger.error("音声ファイルが見つかりません: %s", audio_file_path)
                 return None
 
-            # ファイルサイズチェック（20MB制限）
-            file_size = os.path.getsize(audio_file_path)
-            if file_size > 20 * 1024 * 1024:
-                logger.warning(f"ファイルサイズが大きすぎます: {file_size / 1024 / 1024:.1f}MB")
-                return "⚠️ 音声ファイルが大きすぎるため、文字起こしできませんでした（制限: 20MB）"
+            size = os.path.getsize(audio_file_path)
+            if size > 20 * 1024 * 1024:
+                msg = f"⚠️ ファイル大きすぎ ({size/1024/1024:.1f}MB)、20MB以下にしてください"
+                logger.warning(msg)
+                return msg
 
-            logger.info(f"音声文字起こし開始: {audio_file_path} ({file_size / 1024:.1f}KB)")
+            logger.info("Uploading audio: %s (%.1fKB)", audio_file_path, size/1024)
 
-            # 音声ファイルをアップロード
-            audio_file = genai.upload_file(audio_file_path)
+            # ファイルアップロード
+            uploaded = self.client.files.upload(file=audio_file_path)
 
-            # Gemini 2.5 Flash用の生成設定
-            generation_config = genai.types.GenerationConfig(
-                temperature=0.1,  # 一貫性重視
+            # 生成設定
+            gen_cfg = types.GenerationConfig(
+                temperature=0.1,
                 top_p=0.8,
                 top_k=20,
                 max_output_tokens=8192,
-                candidate_count=1
+                candidate_count=1,
             )
 
-            # 思考機能設定（2.5 Flash用）
-            thinking_config = None
-            if self.thinking_budget != 0:  # 思考機能を使用
-                thinking_config = genai.types.ThinkingConfig(
-                    thinking_budget=self.thinking_budget if self.thinking_budget > 0 else None
+            # 思考設定
+            thinking_cfg = None
+            if self.thinking_budget != 0:
+                thinking_cfg = types.ThinkingConfig(
+                    thinking_budget=(self.thinking_budget if self.thinking_budget > 0 else None)
                 )
 
-            # プロンプト作成
-            prompt = """
-この音声ファイルを日本語で文字起こししてください。
-
-【要求事項】
-1. 会話の内容を正確に文字起こし
-2. 話者が複数いる場合は「話者A:」「話者B:」のように区別
-3. 聞き取れない部分は[聞き取り不能]と記載
-4. 自然な日本語に整形
-5. 重要な内容は太字で強調
-
-音声ファイル:
-"""
-
-            # 文字起こし実行
+            # 非同期呼び出し
             response = await asyncio.get_event_loop().run_in_executor(
                 None,
-                lambda: self.model.generate_content(
-                    [prompt, audio_file],
-                    generation_config=generation_config,
-                    safety_settings=self.safety_settings
+                lambda: self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=[self.system_instruction, uploaded],
+                    generation_config=gen_cfg,
+                    thinking_config=thinking_cfg,
+                    safety_settings=self.safety_settings,
                 )
             )
 
-            # アップロードしたファイルを削除
-            genai.delete_file(audio_file.name)
+            # アップロードファイル削除
+            try:
+                genai.delete_file(uploaded.name)
+            except Exception:
+                pass
 
             if response.text:
-                logger.info("文字起こし成功")
+                logger.info("Transcription succeeded")
                 return response.text.strip()
             else:
-                logger.warning("文字起こし結果が空でした")
-                return "⚠️ 音声を認識できませんでした。音声が小さすぎるか、ノイズが多い可能性があります。"
+                logger.warning("Empty transcription result")
+                return "⚠️ 音声を認識できませんでした。"
 
         except Exception as e:
-            logger.error(f"文字起こしエラー: {e}")
+            logger.error("Transcription error: %s", e)
+            msg = str(e).lower()
+            if "quota" in msg:
+                return "❌ API使用量制限に達しました。しばらくして再試行してください。"
+            if "safety" in msg:
+                return "⚠️ 安全性の理由で文字起こしをスキップしました。"
+            if "file_too_large" in msg:
+                return "❌ ファイルサイズが大きすぎます。20MB以下にしてください。"
+            return f"❌ 文字起こし中にエラーが発生しました: {e}"
 
-            # エラーの種類に応じたメッセージ
-            error_msg = str(e).lower()
-            if "quota" in error_msg:
-                return "❌ API使用量制限に達しました。しばらく時間をおいてからお試しください。"
-            elif "safety" in error_msg:
-                return "⚠️ 安全性の理由により文字起こしをスキップしました。"
-            elif "file_too_large" in error_msg:
-                return "❌ ファイルサイズが大きすぎます。20MB以下のファイルを使用してください。"
-            else:
-                return f"❌ 文字起こし中にエラーが発生しました: {str(e)}"
-
-    async def enhance_transcription(self, raw_transcription: str) -> str:
+    async def enhance_transcription(self, raw: str) -> str:
         """
-        文字起こし結果の改善・整形
-
-        Args:
-            raw_transcription: 生の文字起こしテキスト
-
-        Returns:
-            改善された文字起こしテキスト
+        文字起こし後のテキストを整形
         """
         try:
             prompt = f"""
 以下の文字起こしテキストをより読みやすく整形してください：
 
 【元テキスト】
-{raw_transcription}
+{raw}
 
 【整形要求】
-1. 話者の発言を自然な段落に分ける
-2. 重要なキーワードを**太字**で強調
-3. 会話の流れが理解しやすいよう構成
-4. 誤字脱字があれば修正
-5. 不自然な繰り返しや「えー」「あの」等の整理
-
-読みやすく整形されたテキストを出力してください。
+- 話者を自然に段落分け
+- 重要キーワードを**太字**で強調
+- 会話の流れが分かりやすい構成
+- 誤字脱字修正
+- 不要な繰り返し除去
 """
-
+            gen_cfg = types.GenerationConfig(temperature=0.3, max_output_tokens=4096)
             response = await asyncio.get_event_loop().run_in_executor(
                 None,
-                lambda: self.model.generate_content(
-                    prompt,
-                    generation_config=genai.types.GenerationConfig(
-                        temperature=0.3,
-                        max_output_tokens=4096
-                    )
+                lambda: self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=prompt,
+                    generation_config=gen_cfg,
+                    safety_settings=self.safety_settings,
                 )
             )
-
-            if response.text:
-                return response.text.strip()
-            else:
-                return raw_transcription
-
+            return response.text.strip() if response.text else raw
         except Exception as e:
-            logger.error(f"文字起こし改善エラー: {e}")
-            return raw_transcription
+            logger.error("Enhance error: %s", e)
+            return raw
 
     def get_model_info(self) -> dict:
-        """モデル情報の取得"""
+        """
+        モデル情報取得
+        """
         try:
-            model_info = genai.get_model(self.model_name)
+            info = self.client.get_model(self.model_name)
             return {
-                'name': model_info.name,
-                'display_name': model_info.display_name,
-                'description': model_info.description,
-                'input_token_limit': model_info.input_token_limit,
-                'output_token_limit': model_info.output_token_limit,
-                'supported_generation_methods': model_info.supported_generation_methods,
-                'temperature': getattr(model_info, 'temperature', 'N/A'),
-                'top_p': getattr(model_info, 'top_p', 'N/A'),
-                'top_k': getattr(model_info, 'top_k', 'N/A')
+                "name": info.name,
+                "description": info.description,
+                "input_token_limit": info.input_token_limit,
+                "output_token_limit": info.output_token_limit,
+                "supported_methods": info.supported_generation_methods,
             }
         except Exception as e:
-            logger.error(f"モデル情報取得エラー: {e}")
-            return {'error': str(e)}
+            logger.error("Model info error: %s", e)
+            return {"error": str(e)}
 
     async def test_connection(self) -> bool:
-        """API接続テスト"""
+        """
+        API 接続テスト
+        """
         try:
+            gen_cfg = types.GenerationConfig(max_output_tokens=10)
             response = await asyncio.get_event_loop().run_in_executor(
                 None,
-                lambda: self.model.generate_content(
-                    "こんにちは",
-                    generation_config=genai.types.GenerationConfig(max_output_tokens=10)
+                lambda: self.client.models.generate_content(
+                    model=self.model_name,
+                    contents="こんにちは",
+                    generation_config=gen_cfg,
                 )
             )
-
-            if response.text:
-                logger.info("Gemini API接続テスト成功")
-                return True
-            else:
-                logger.warning("Gemini API接続テスト失敗: レスポンスが空")
-                return False
-
+            ok = bool(response.text)
+            logger.info("Connection test %s", "succeeded" if ok else "failed")
+            return ok
         except Exception as e:
-            logger.error(f"Gemini API接続テスト失敗: {e}")
+            logger.error("Connection test error: %s", e)
             return False
