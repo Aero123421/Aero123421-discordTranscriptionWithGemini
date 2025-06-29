@@ -59,33 +59,21 @@ async def on_ready():
     logger.info(f"Logged in as {bot.user} (ID: {bot.user.id})")
     logger.info("------")
     
-    # 環境変数確認
-    api_key = config.GEMINI_API_KEY
-    if api_key:
-        logger.info("Gemini API key loaded: %s***", api_key[:8] if len(api_key) >= 8 else "***")
-    else:
-        logger.error("Gemini API key not found!")
-        return
-    
-    # Gemini API接続テスト
+    # Gemini API接続テスト（エラーでもBot終了させない）
     logger.info("Starting Gemini API connection test...")
     try:
         test_result = await gemini_client.test_connection()
         if test_result:
             logger.info("✅ Gemini API connection test passed")
         else:
-            logger.error("❌ Gemini API connection test failed")
+            logger.warning("⚠️ Gemini API connection test failed - continuing anyway")
     except Exception as e:
-        logger.error("❌ Connection test exception: %s", e)
+        logger.warning(f"⚠️ Gemini API connection test exception: {e} - continuing anyway")
+    
+    logger.info("🤖 Discord Transcription Bot is ready!")
 
 
-@bot.event
-async def setup_hook():
-    """Bot起動時の初期化処理"""
-    logger.info("Bot setup hook called")
-
-
-# スラッシュコマンド定義（修正版：@bot.slash_command を使用）
+# py-cord用のスラッシュコマンド定義
 @bot.slash_command(name="set_voice_category", description="録音対象のボイスチャンネルカテゴリを設定")
 async def set_voice_category(ctx: discord.ApplicationContext, category: discord.CategoryChannel):
     """ボイスカテゴリ設定"""
@@ -212,6 +200,14 @@ async def stop_recording_command(ctx: discord.ApplicationContext):
     except Exception as e:
         await ctx.respond(f"❌ 録音停止に失敗しました: {e}", ephemeral=True)
         logger.error(f"Failed to stop recording: {e}")
+
+
+# テスト用の簡単なスラッシュコマンド
+@bot.slash_command(name="test", description="接続テスト用コマンド")
+async def test_command(ctx: discord.ApplicationContext):
+    """テスト用コマンド"""
+    await ctx.respond("✅ Bot is working correctly!", ephemeral=True)
+    logger.info(f"Test command executed by {ctx.user}")
 
 
 @bot.event
@@ -447,3 +443,4 @@ if __name__ == "__main__":
         logger.info("Bot stopped by user")
     except Exception as e:
         logger.error(f"Failed to start bot: {e}")
+
