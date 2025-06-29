@@ -43,7 +43,7 @@ gemini_client = GeminiClient(
 config_manager = ConfigManager()
 
 # 録音状態管理
-recording_states: Dict[int, Dict] = {}  # guild_id -> recording_info
+recording_states: Dict[int, Dict] = {}
 
 
 class MP3Sink(discord.sinks.MP3Sink):
@@ -64,58 +64,45 @@ async def on_ready():
         logger.info("Gemini API connection test passed")
     else:
         logger.error("Gemini API connection test failed")
-    
-    # スラッシュコマンド同期
-    try:
-        synced = await bot.tree.sync()
-        logger.info(f"Synced {len(synced)} command(s)")
-    except Exception as e:
-        logger.error(f"Failed to sync commands: {e}")
 
 
-@bot.event
-async def setup_hook():
-    """Bot起動時の初期化処理"""
-    logger.info("Bot setup hook called")
-
-
-# スラッシュコマンド定義（修正版）
-@bot.tree.command(name="set_voice_category", description="録音対象のボイスチャンネルカテゴリを設定")
-async def set_voice_category(interaction: discord.Interaction, category: discord.CategoryChannel):
+# スラッシュコマンド定義（修正版：@bot.slash_command を使用）
+@bot.slash_command(name="set_voice_category", description="録音対象のボイスチャンネルカテゴリを設定")
+async def set_voice_category(ctx: discord.ApplicationContext, category: discord.CategoryChannel):
     """ボイスカテゴリ設定"""
     try:
-        config_manager.set_voice_category(interaction.guild.id, category.id)
-        await interaction.response.send_message(
+        config_manager.set_voice_category(ctx.guild.id, category.id)
+        await ctx.respond(
             f"✅ 録音対象カテゴリを **{category.name}** に設定しました。\n"
             f"このカテゴリ内のボイスチャンネルに参加すると録音が開始されます。",
             ephemeral=True
         )
-        logger.info(f"Voice category set: {category.name} (ID: {category.id}) in guild {interaction.guild.id}")
+        logger.info(f"Voice category set: {category.name} (ID: {category.id}) in guild {ctx.guild.id}")
     except Exception as e:
-        await interaction.response.send_message(f"❌ 設定に失敗しました: {e}", ephemeral=True)
+        await ctx.respond(f"❌ 設定に失敗しました: {e}", ephemeral=True)
         logger.error(f"Failed to set voice category: {e}")
 
 
-@bot.tree.command(name="set_text_channel", description="文字起こし結果を送信するテキストチャンネルを設定")
-async def set_text_channel(interaction: discord.Interaction, channel: discord.TextChannel):
+@bot.slash_command(name="set_text_channel", description="文字起こし結果を送信するテキストチャンネルを設定")
+async def set_text_channel(ctx: discord.ApplicationContext, channel: discord.TextChannel):
     """テキストチャンネル設定"""
     try:
-        config_manager.set_text_channel(interaction.guild.id, channel.id)
-        await interaction.response.send_message(
+        config_manager.set_text_channel(ctx.guild.id, channel.id)
+        await ctx.respond(
             f"✅ 文字起こし結果送信チャンネルを {channel.mention} に設定しました。",
             ephemeral=True
         )
-        logger.info(f"Text channel set: {channel.name} (ID: {channel.id}) in guild {interaction.guild.id}")
+        logger.info(f"Text channel set: {channel.name} (ID: {channel.id}) in guild {ctx.guild.id}")
     except Exception as e:
-        await interaction.response.send_message(f"❌ 設定に失敗しました: {e}", ephemeral=True)
+        await ctx.respond(f"❌ 設定に失敗しました: {e}", ephemeral=True)
         logger.error(f"Failed to set text channel: {e}")
 
 
-@bot.tree.command(name="show_channels", description="現在の設定を表示")
-async def show_channels(interaction: discord.Interaction):
+@bot.slash_command(name="show_channels", description="現在の設定を表示")
+async def show_channels(ctx: discord.ApplicationContext):
     """設定表示"""
     try:
-        settings = config_manager.get_channels(interaction.guild.id)
+        settings = config_manager.get_channels(ctx.guild.id)
         
         embed = discord.Embed(title="📋 現在の設定", color=0x00ff00)
         
@@ -163,34 +150,34 @@ async def show_channels(interaction: discord.Interaction):
                 inline=False
             )
         
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await ctx.respond(embed=embed, ephemeral=True)
         
     except Exception as e:
-        await interaction.response.send_message(f"❌ 設定の取得に失敗しました: {e}", ephemeral=True)
+        await ctx.respond(f"❌ 設定の取得に失敗しました: {e}", ephemeral=True)
         logger.error(f"Failed to show channels: {e}")
 
 
-@bot.tree.command(name="unset_channels", description="すべての設定を解除")
-async def unset_channels(interaction: discord.Interaction):
+@bot.slash_command(name="unset_channels", description="すべての設定を解除")
+async def unset_channels(ctx: discord.ApplicationContext):
     """設定解除"""
     try:
-        config_manager.unset_channels(interaction.guild.id)
-        await interaction.response.send_message("✅ すべての設定を解除しました。", ephemeral=True)
-        logger.info(f"All settings cleared for guild {interaction.guild.id}")
+        config_manager.unset_channels(ctx.guild.id)
+        await ctx.respond("✅ すべての設定を解除しました。", ephemeral=True)
+        logger.info(f"All settings cleared for guild {ctx.guild.id}")
     except Exception as e:
-        await interaction.response.send_message(f"❌ 設定の解除に失敗しました: {e}", ephemeral=True)
+        await ctx.respond(f"❌ 設定の解除に失敗しました: {e}", ephemeral=True)
         logger.error(f"Failed to unset channels: {e}")
 
 
-@bot.tree.command(name="stop", description="現在の録音を手動で停止（管理者のみ）")
-@discord.app_commands.default_permissions(administrator=True)
-async def stop_recording(interaction: discord.Interaction):
+@bot.slash_command(name="stop", description="現在の録音を手動で停止（管理者のみ）")
+@discord.default_permissions(administrator=True)
+async def stop_recording_command(ctx: discord.ApplicationContext):
     """録音手動停止"""
     try:
-        guild_id = interaction.guild.id
+        guild_id = ctx.guild.id
         
         if guild_id not in recording_states:
-            await interaction.response.send_message("❌ 現在録音中ではありません。", ephemeral=True)
+            await ctx.respond("❌ 現在録音中ではありません。", ephemeral=True)
             return
         
         recording_info = recording_states[guild_id]
@@ -198,13 +185,13 @@ async def stop_recording(interaction: discord.Interaction):
         
         if vc and vc.recording:
             vc.stop_recording()
-            await interaction.response.send_message("✅ 録音を手動で停止しました。文字起こし処理を開始します。", ephemeral=True)
+            await ctx.respond("✅ 録音を手動で停止しました。文字起こし処理を開始します。", ephemeral=True)
             logger.info(f"Recording manually stopped in guild {guild_id}")
         else:
-            await interaction.response.send_message("❌ 録音が見つかりません。", ephemeral=True)
+            await ctx.respond("❌ 録音が見つかりません。", ephemeral=True)
             
     except Exception as e:
-        await interaction.response.send_message(f"❌ 録音停止に失敗しました: {e}", ephemeral=True)
+        await ctx.respond(f"❌ 録音停止に失敗しました: {e}", ephemeral=True)
         logger.error(f"Failed to stop recording: {e}")
 
 
