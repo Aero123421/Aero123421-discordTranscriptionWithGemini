@@ -49,6 +49,11 @@ class MP3Sink(discord.sinks.MP3Sink):
     def __init__(self):
         super().__init__()
 
+class SilenceAudioSource(discord.AudioSource):
+    """音声接続維持用のサイレンス音声"""
+    def read(self) -> bytes:
+        return b'\x00' * 3840
+
 @bot.event
 async def on_ready():
     logger.info(f"Logged in as {bot.user} (ID: {bot.user.id})")
@@ -86,6 +91,7 @@ async def set_text_channel(ctx: discord.ApplicationContext, channel: discord.Tex
 @bot.slash_command(name="show_channels", description="現在の設定を表示")
 async def show_channels(ctx: discord.ApplicationContext):
     try:
+        await ctx.defer()
         settings = config_manager.get_channels(ctx.guild.id)
         embed = discord.Embed(title="📋 現在の設定", color=0x00ff00)
         
@@ -105,41 +111,50 @@ async def show_channels(ctx: discord.ApplicationContext):
             inline=False
         )
         
-        await ctx.respond(embed=embed, ephemeral=True)
+        await ctx.followup.send(embed=embed, ephemeral=True)
     except Exception as e:
-        await ctx.respond(f"❌ 取得失敗: {e}", ephemeral=True)
+        if not ctx.response.is_done():
+            await ctx.respond(f"❌ 取得失敗: {e}", ephemeral=True)
         logger.error(e)
 
 @bot.slash_command(name="unset_channels", description="すべての設定を解除")
 async def unset_channels(ctx: discord.ApplicationContext):
     try:
+        await ctx.defer()
         config_manager.unset_channels(ctx.guild.id)
-        await ctx.respond("✅ すべての設定を解除しました。", ephemeral=True)
+        await ctx.followup.send("✅ すべての設定を解除しました。", ephemeral=True)
         logger.info(f"Cleared settings for guild {ctx.guild.id}")
     except Exception as e:
-        await ctx.respond(f"❌ 解除失敗: {e}", ephemeral=True)
+        if not ctx.response.is_done():
+            await ctx.respond(f"❌ 解除失敗: {e}", ephemeral=True)
         logger.error(e)
 
 @bot.slash_command(name="stop", description="現在の録音を手動で停止（管理者のみ）")
 @discord.default_permissions(administrator=True)
 async def stop_recording_command(ctx: discord.ApplicationContext):
-    guild_id = ctx.guild.id
-    info = recording_states.get(guild_id)
-    if not info:
-        await ctx.respond("❌ 現在録音中ではありません。", ephemeral=True)
-        return
-    
-    vc = info['voice_client']
-    if vc and vc.recording:
-        try:
-            vc.stop_recording()
-            await ctx.respond("✅ 録音を停止しました。", ephemeral=True)
-            logger.info(f"Manual stop recording in guild {guild_id}")
-        except Exception as e:
-            await ctx.respond(f"❌ 停止に失敗: {e}", ephemeral=True)
-            logger.error(f"Error manually stopping recording: {e}")
-    else:
-        await ctx.respond("❌ 録音中ではありません。", ephemeral=True)
+    try:
+        await ctx.defer()
+        guild_id = ctx.guild.id
+        info = recording_states.get(guild_id)
+        if not info:
+            await ctx.followup.send("❌ 現在録音中ではありません。", ephemeral=True)
+            return
+        
+        vc = info['voice_client']
+        if vc and vc.recording:
+            try:
+                vc.stop_recording()
+                await ctx.followup.send("✅ 録音を停止しました。", ephemeral=True)
+                logger.info(f"Manual stop recording in guild {guild_id}")
+            except Exception as e:
+                await ctx.followup.send(f"❌ 停止に失敗: {e}", ephemeral=True)
+                logger.error(f"Error manually stopping recording: {e}")
+        else:
+            await ctx.followup.send("❌ 録音中ではありません。", ephemeral=True)
+    except Exception as e:
+        if not ctx.response.is_done():
+            await ctx.respond(f"❌ コマンドエラー: {e}", ephemeral=True)
+        logger.error(e)
 
 @bot.slash_command(name="test", description="接続テスト用コマンド")
 async def test_command(ctx: discord.ApplicationContext):
@@ -189,9 +204,18 @@ async def start_recording(guild: discord.Guild, channel: discord.VoiceChannel):
     try:
         logger.info(f"Attempting to connect to voice channel: {channel.name}")
         vc = await channel.connect()
+        
+        # 🔧 Pycord固有の修正：サイレンス音声で接続維持
+        silence_source = SilenceAudioSource()
+        vc.play(silence_source)
+        
         sink = MP3Sink()
         vc.start_recording(sink, finished_callback, channel)
-        recording_states[guild_id] = {'voice_client': vc, 'sink': sink}
+        recording_states[guild_id] = {
+            'voice_client': vc, 
+            'sink': sink,
+            'silence_source': silence_source
+        }
         logger.info(f"Recording started in {channel.name} (Guild: {guild_id})")
         
     except discord.errors.ClientException as e:
@@ -214,8 +238,15 @@ async def stop_recording_cleanup(guild: discord.Guild):
                 logger.info(f"Recording stopped for guild {guild_id}")
             except Exception as e:
                 logger.error(f"Error stopping recording: {e}")
+        
+        # サイレンス音声停止
+        if vc and vc.is_playing():
+            try:
+                vc.stop()
+            except Exception as e:
+                logger.error(f"Error stopping silence audio: {e}")
 
-# ✅ 修正: 非同期コルーチンに変更
+# ✅ 修正: 非同期コルーチンに変更（Pycord対応）
 async def finished_callback(sink: MP3Sink, channel: discord.VoiceChannel, *args):
     """録音完了時のコールバック（非同期版）"""
     logger.info(f"Recording finished for {channel.name}")
@@ -233,8 +264,14 @@ async def process_recording(sink: MP3Sink, channel: discord.VoiceChannel):
     
     # 音声クライアント切断
     if info and info['voice_client']:
+        vc = info['voice_client']
         try:
-            await info['voice_client'].disconnect()
+            # サイレンス音声停止
+            if vc.is_playing():
+                vc.stop()
+            
+            # 音声クライアント切断
+            await vc.disconnect()
             logger.info(f"Disconnected from voice channel in {guild.name}")
         except Exception as e:
             logger.error(f"Error disconnecting from voice: {e}")
@@ -294,8 +331,13 @@ async def on_error(event, *args, **kwargs):
 
 @bot.event
 async def on_application_command_error(ctx: discord.ApplicationContext, error):
-    if not ctx.response.is_done():
-        await ctx.respond(f"❌ コマンドエラー: {error}", ephemeral=True)
+    try:
+        if not ctx.response.is_done():
+            await ctx.respond(f"❌ コマンドエラー: {error}", ephemeral=True)
+        else:
+            await ctx.followup.send(f"❌ コマンドエラー: {error}", ephemeral=True)
+    except Exception as e:
+        logger.error(f"Error sending error message: {e}")
     logger.error(f"Command error: {error}", exc_info=True)
 
 if __name__ == "__main__":
@@ -303,4 +345,3 @@ if __name__ == "__main__":
         bot.run(config.DISCORD_TOKEN)
     except Exception as e:
         logger.error(f"Failed to start bot: {e}")
-
