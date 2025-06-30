@@ -211,11 +211,11 @@ async def start_recording(guild: discord.Guild, channel: discord.VoiceChannel):
             return
 
     logger.info(f"Attempting to connect to voice channel: {channel.name}")
-    vc = await channel.connect()
+    # 発言権限がないチャンネルでも切断されないよう自分をミュートして接続
+    vc = await channel.connect(self_mute=True)
 
-    # 接続維持用に無音を再生
-    silence = Silence()
-    vc.play(silence)
+    # ハンドシェイク直後に録音を開始すると稀に復号エラーが発生するため少し待つ
+    await asyncio.sleep(0.2)
 
     sink = MP3Sink()
     vc.start_recording(sink, finished_callback, channel)
@@ -223,7 +223,6 @@ async def start_recording(guild: discord.Guild, channel: discord.VoiceChannel):
     recording_states[guild.id] = {
         "voice_client": vc,
         "sink": sink,
-        "silence": silence,
     }
     logger.info(f"Recording started in {channel.name} (Guild: {guild.id})")
 
