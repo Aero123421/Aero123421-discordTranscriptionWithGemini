@@ -10,15 +10,12 @@
 - **高品質文字起こし**: **Google Gemini 2.5 Flash API** を利用して音声データを文字起こしします
 - **AI整形機能**: Gemini 2.5 Flash の思考機能を使ったテキスト整形も可能です
 - **自動投稿**: 文字起こし結果を指定されたテキストチャンネルに **`.txt` ファイル形式**で投稿します
-- **暗号化設定管理**: `config_manager.py` によりチャンネル設定を暗号化して `channels.json` に保存し、サーバーごとに永続化します
-- **環境変数管理**: `.env` または環境変数で設定を管理（Pydantic 使用）
-- **Docker対応**: Docker / Docker Compose を利用した簡単なデプロイ
+
 
 ## 📋 必要なもの
 
 - **Discord Bot トークン**
 - **Google Gemini API キー**
-- **Docker と Docker Compose** (または Python 3.11 環境と ffmpeg)
 
 ## 🚀 セットアップ
 
@@ -43,15 +40,9 @@
 
 ### 3. 環境設定
 
-リポジトリをクローンし、環境変数を設定します：
 
-```bash
-git clone <repository-url>
-cd discord-transcription-bot
-cp .env.example .env
-```
 
-`.env` ファイルを編集して以下の値を設定：
+`.env.example` ファイルを編集して以下の値を設定：
 
 ```env
 # Discord Bot設定
@@ -67,19 +58,6 @@ GEMINI_THINKING_BUDGET=-1  # -1=動的思考（推奨）, 0=思考オフ, 正の
 
 ### 4. デプロイ方法
 
-#### Docker Compose で起動（推奨）
-
-```bash
-# サービス起動
-docker-compose up -d
-
-# ログ確認
-docker-compose logs -f discord-transcription-bot
-
-# サービス停止
-docker-compose down
-```
-
 #### Python 直接実行
 
 ```bash
@@ -90,7 +68,6 @@ pip install -r requirements.txt
 python main.py
 ```
 
-**注意**: Python直接実行の場合、事前に `ffmpeg` をシステムにインストールしてください。
 
 ## 💬 使い方
 
@@ -104,7 +81,7 @@ Bot 起動後、Discord サーバーで以下のスラッシュコマンドを�
 | `/set_text_channel` | 文字起こし結果（`.txt`ファイル）を送信するテキストチャンネルを設定 | 全ユーザー |
 | `/show_channels` | 現在設定されている録音対象と結果送信チャンネルを表示 | 全ユーザー |
 | `/unset_channels` | 現在のサーバーで設定されているチャンネル情報をすべて解除 | 全ユーザー |
-| `/stop` | 現在進行中の録音を手動で停止（デバッグ・緊急停止用） | **管理者のみ** |
+
 
 ### 設定例
 
@@ -145,18 +122,13 @@ Bot 起動後、Discord サーバーで以下のスラッシュコマンドを�
 ```
 discord-transcription-bot/
 ├── main.py                 # メインBotファイル
-├── config.py              # Pydantic設定管理
-├── config_manager.py      # 暗号化設定管理
-├── gemini_client.py       # Gemini 2.5 Flash APIクライアント
 ├── requirements.txt       # Python依存関係
-├── Dockerfile            # Docker設定
-├── docker-compose.yml    # Docker Compose設定
 ├── .env.example          # 環境変数テンプレート
 ├── .gitignore           # Git除外設定
 ├── README.md            # このファイル
 └── data/                # 設定ファイル保存ディレクトリ
     ├── channels.json    # 暗号化された設定（自動生成）
-    └── config.key       # 暗号化キー（自動生成）
+
 ```
 
 ## 🔒 セキュリティ機能
@@ -184,72 +156,15 @@ discord-transcription-bot/
 - **API制限**: Gemini APIの使用量制限に注意
 - **同時録音**: サーバーごとに1つの録音セッションのみ
 
-## 🛠️ トラブルシューティング
 
-### よくある問題
 
-#### 1. Bot がボイスチャンネルに接続できない
-- **権限確認**: Bot に「ボイスチャンネルに接続」「音声を聞く」権限があるか確認
-- **チャンネル設定**: カテゴリにボイスチャンネルが存在するか確認
 
-#### 2. 文字起こしが動作しない
-- **API キー**: Gemini API キーが正しく設定されているか確認
-- **使用量制限**: API の使用量制限に達していないか確認
-- **ファイルサイズ**: 録音ファイルが20MB以下か確認
-
-#### 3. Docker 起動エラー
-```bash
-# ログ確認
-docker-compose logs discord-transcription-bot
-
-# コンテナ再起動
-docker-compose restart discord-transcription-bot
-
-# 完全リビルド
-docker-compose down
-docker-compose build --no-cache
-docker-compose up -d
-```
-
-### ログ確認方法
-
-```bash
-# リアルタイムログ表示
-docker-compose logs -f discord-transcription-bot
-
-# 最新100行表示
-docker-compose logs --tail=100 discord-transcription-bot
-```
-
-## 🔄 アップデート手順
-
-```bash
-# 最新コードを取得
-git pull origin main
-
-# サービス停止
-docker-compose down
-
-# イメージ再ビルド
-docker-compose build --no-cache
-
-# サービス再起動
-docker-compose up -d
-```
-
-## 🤝 貢献
-
-プルリクエストやイシューの報告を歓迎します。バグ報告や機能追加の提案は GitHub Issues をご利用ください。
-
-## 📄 ライセンス
-
-MIT License - 詳細は [LICENSE](LICENSE) ファイルを参照してください。
 
 ## 🙏 謝辞
 
 - [Pycord](https://github.com/Pycord-Development/pycord) - Discord API ラッパー
 - [Google Gemini](https://ai.google.dev/) - AI 文字起こし API
-- [Cryptography](https://cryptography.io/) - 暗号化ライブラリ
+
 
 ---
 
