@@ -1,4 +1,10 @@
-# main.py
+# main.py ― 修正版
+#   ・finished_callback を非同期化
+#   ・AudioData を .file で取得（Pycord 方式）
+#   ・無音ストリームで接続維持 & force=True で確実に切断
+#   ・重複接続／録音同時実行をブロック
+#   ・GeminiClient（client.files.upload 対応版）と連携
+
 import asyncio
 import io
 import logging
@@ -13,109 +19,119 @@ from config import BotConfig
 from config_manager import ConfigManager
 from gemini_client import GeminiClient
 
-# ------------------------------------------------------------
+# ─────────────────────────────────────────
 # ログ設定
-# ------------------------------------------------------------
+# ─────────────────────────────────────────
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
-# ------------------------------------------------------------
+# ─────────────────────────────────────────
 # 設定読み込み
-# ------------------------------------------------------------
-config = BotConfig()
+# ─────────────────────────────────────────
+cfg = BotConfig()
 
-# ------------------------------------------------------------
+# ─────────────────────────────────────────
 # Discord Bot 初期化
-# ------------------------------------------------------------
+# ─────────────────────────────────────────
 intents = discord.Intents.default()
 intents.message_content = True
 intents.voice_states = True
 intents.guilds = True
-
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ------------------------------------------------------------
+# ─────────────────────────────────────────
 # Gemini クライアント
-# ------------------------------------------------------------
-gemini_client = GeminiClient(
-    api_key=config.GEMINI_API_KEY,
-    model_name=config.GEMINI_MODEL_NAME,
-    thinking_budget=config.GEMINI_THINKING_BUDGET,
+# ─────────────────────────────────────────
+gemini = GeminiClient(
+    api_key=cfg.GEMINI_API_KEY,
+    model_name=cfg.GEMINI_MODEL_NAME,
+    thinking_budget=cfg.GEMINI_THINKING_BUDGET,
 )
 
-# ------------------------------------------------------------
-# 設定管理
-# ------------------------------------------------------------
-config_manager = ConfigManager()
-
-# ------------------------------------------------------------
-# 録音状態管理
-# ------------------------------------------------------------
+# ─────────────────────────────────────────
+# 設定マネージャ & 録音状態
+# ─────────────────────────────────────────
+manager = ConfigManager()
 recording_states: Dict[int, Dict] = {}
 
-# ------------------------------------------------------------
-# Sink & Silence Source
-# ------------------------------------------------------------
-class MP3Sink(discord.sinks.MP3Sink):
-    """Pycord MP3 Sink"""
-    def __init__(self):
-        super().__init__()
 
-class SilenceAudioSource(discord.AudioSource):
-    """接続維持用の無音ストリーム"""
-    def read(self) -> bytes:  # 20 ms = 3840byte (48kHz * 2ch * 2byte * 0.02)
+# ─────────────────────────────────────────
+# 録音系ユーティリティ
+# ─────────────────────────────────────────
+class MP3Sink(discord.sinks.MP3Sink):
+    """Pycord 標準 MP3Sink をそのまま利用"""
+    pass
+
+
+class Silence(discord.AudioSource):
+    """接続維持用の無音 20 ms フレーム (48 kHz / 2 ch / 16 bit = 3840 B)"""
+    def read(self) -> bytes:
         return b"\x00" * 3840
 
-# ------------------------------------------------------------
+
+# ─────────────────────────────────────────
 # Bot イベント
-# ------------------------------------------------------------
+# ─────────────────────────────────────────
 @bot.event
 async def on_ready():
     logger.info(f"Logged in as {bot.user} (ID: {bot.user.id})")
     logger.info("------")
-    logger.info("Starting Gemini API connection test...")
-    if await gemini_client.test_connection():
+    logger.info("Starting Gemini API connection test…")
+    if await gemini.test_connection():
         logger.info("✅ Gemini API connection test passed")
     else:
-        logger.warning("⚠️ Gemini API connection test failed - continuing anyway")
+        logger.warning("⚠️ Gemini API connection test failed – continuing anyway")
     logger.info("🤖 Discord Transcription Bot is ready!")
 
-# ------------------------------------------------------------
-# スラッシュコマンド
-# ------------------------------------------------------------
-@bot.slash_command(name="set_voice_category", description="録音対象のボイスカテゴリを設定")
-async def set_voice_category(ctx: discord.ApplicationContext, category: discord.CategoryChannel):
-    config_manager.set_voice_category(ctx.guild.id, category.id)
-    await ctx.respond(f"✅ 録音対象カテゴリを **{category.name}** に設定しました。", ephemeral=True)
 
-@bot.slash_command(name="set_text_channel", description="文字起こし送信チャンネルを設定")
+# ─────────────────────────────────────────
+# スラッシュコマンド
+# ─────────────────────────────────────────
+@bot.slash_command(name="set_voice_category", description="録音対象カテゴリを設定")
+async def set_voice_category(
+    ctx: discord.ApplicationContext, category: discord.CategoryChannel
+):
+    manager.set_voice_category(ctx.guild.id, category.id)
+    await ctx.respond(
+        f"✅ 録音対象カテゴリを **{category.name}** に設定しました。", ephemeral=True
+    )
+
+
+@bot.slash_command(name="set_text_channel", description="結果送信チャンネルを設定")
 async def set_text_channel(ctx: discord.ApplicationContext, channel: discord.TextChannel):
-    config_manager.set_text_channel(ctx.guild.id, channel.id)
+    manager.set_text_channel(ctx.guild.id, channel.id)
     await ctx.respond(f"✅ 結果送信チャンネルを {channel.mention} に設定しました。", ephemeral=True)
+
 
 @bot.slash_command(name="show_channels", description="現在の設定を表示")
 async def show_channels(ctx: discord.ApplicationContext):
-    s = config_manager.get_channels(ctx.guild.id)
-    embed = discord.Embed(title="📋 現在の設定", color=0x00ff00)
-    embed.add_field(name="🎤 録音対象カテゴリ",
-                    value=f"<#{s.get('voice_category_id')}>" if s.get('voice_category_id') else "未設定",
-                    inline=False)
-    embed.add_field(name="📝 結果送信チャンネル",
-                    value=f"<#{s.get('text_channel_id')}>" if s.get('text_channel_id') else "未設定",
-                    inline=False)
+    s = manager.get_channels(ctx.guild.id)
+    embed = discord.Embed(title="📋 現在の設定", color=0x00FF00)
+    embed.add_field(
+        name="🎤 録音対象カテゴリ",
+        value=f"<#{s.get('voice_category_id')}>" if s.get("voice_category_id") else "未設定",
+        inline=False,
+    )
+    embed.add_field(
+        name="📝 結果送信チャンネル",
+        value=f"<#{s.get('text_channel_id')}>" if s.get("text_channel_id") else "未設定",
+        inline=False,
+    )
     await ctx.respond(embed=embed, ephemeral=True)
 
-@bot.slash_command(name="unset_channels", description="設定をすべて解除")
+
+@bot.slash_command(name="unset_channels", description="設定を解除")
 async def unset_channels(ctx: discord.ApplicationContext):
-    config_manager.unset_channels(ctx.guild.id)
+    manager.unset_channels(ctx.guild.id)
     await ctx.respond("✅ すべての設定を解除しました。", ephemeral=True)
 
-@bot.slash_command(name="stop", description="現在の録音を停止（管理者のみ）")
+
+@bot.slash_command(name="stop", description="録音を手動停止（管理者）")
 @discord.default_permissions(administrator=True)
-async def stop_recording_cmd(ctx: discord.ApplicationContext):
+async def stop_cmd(ctx: discord.ApplicationContext):
     info = recording_states.get(ctx.guild.id)
     if not info:
         await ctx.respond("❌ 現在録音中ではありません。", ephemeral=True)
@@ -124,46 +140,60 @@ async def stop_recording_cmd(ctx: discord.ApplicationContext):
     if vc and vc.recording:
         vc.stop_recording()
         await ctx.respond("✅ 録音を停止しました。", ephemeral=True)
+    else:
+        await ctx.respond("❌ 録音中ではありません。", ephemeral=True)
 
-# ------------------------------------------------------------
-# Voice State 監視
-# ------------------------------------------------------------
+
+@bot.slash_command(name="test", description="Bot が応答するかテスト")
+async def test_command(ctx: discord.ApplicationContext):
+    await ctx.respond("✅ Bot is working correctly!", ephemeral=True)
+
+
+# ─────────────────────────────────────────
+# VoiceState 監視
+# ─────────────────────────────────────────
 @bot.event
 async def on_voice_state_update(member: discord.Member, before, after):
-    if member.bot:
-        return
+    try:
+        if member.bot:
+            return
 
-    guild_id = member.guild.id
-    cat_id = config_manager.get_channels(guild_id).get("voice_category_id")
-    if not cat_id:
-        return
+        guild_id = member.guild.id
+        cat_id = manager.get_channels(guild_id).get("voice_category_id")
+        if not cat_id:
+            return
 
-    def is_target(ch): return ch and ch.category_id == cat_id
+        def in_target(ch):
+            return ch and ch.category_id == cat_id
 
-    # ── 参加：録音開始 ──────────────────────────────
-    if not before.channel and after.channel and is_target(after.channel):
-        if guild_id not in recording_states and not member.guild.voice_client:
-            await start_recording(member.guild, after.channel)
+        # ── 参加：録音開始 ────────────────────────────
+        if not before.channel and after.channel and in_target(after.channel):
+            if guild_id not in recording_states and not member.guild.voice_client:
+                await start_recording(member.guild, after.channel)
 
-    # ── 退出：録音停止（カテゴリ内に誰も居なくなった） ─────────
-    elif before.channel and is_target(before.channel):
-        cat = bot.get_channel(cat_id)
-        if cat and all(len([m for m in vc.members if not m.bot]) == 0
-                       for vc in cat.voice_channels):
-            await stop_recording_cleanup(member.guild)
+        # ── 退出：カテゴリが空なら録音停止 ────────────────
+        elif before.channel and in_target(before.channel):
+            cat = bot.get_channel(cat_id)
+            if cat and all(
+                len([m for m in vc.members if not m.bot]) == 0 for vc in cat.voice_channels
+            ):
+                await stop_recording_cleanup(member.guild)
+    except Exception as e:
+        logger.error("Error in on_voice_state_update", exc_info=e)
 
-# ------------------------------------------------------------
+
+# ─────────────────────────────────────────
 # 録音開始
-# ------------------------------------------------------------
+# ─────────────────────────────────────────
 async def start_recording(guild: discord.Guild, channel: discord.VoiceChannel):
-    if guild.voice_client or guild.id in recording_states:
+    if guild.id in recording_states or guild.voice_client:
         return
 
     logger.info(f"Attempting to connect to voice channel: {channel.name}")
     vc = await channel.connect()
 
     # 接続維持用に無音を再生
-    silence = SilenceAudioSource()
+    silence = Silence()
     vc.play(silence)
 
     sink = MP3Sink()
@@ -176,9 +206,10 @@ async def start_recording(guild: discord.Guild, channel: discord.VoiceChannel):
     }
     logger.info(f"Recording started in {channel.name} (Guild: {guild.id})")
 
-# ------------------------------------------------------------
-# 録音停止＆切断
-# ------------------------------------------------------------
+
+# ─────────────────────────────────────────
+# 録音停止 & 切断
+# ─────────────────────────────────────────
 async def stop_recording_cleanup(guild: discord.Guild):
     info = recording_states.pop(guild.id, None)
     if not info:
@@ -188,59 +219,65 @@ async def stop_recording_cleanup(guild: discord.Guild):
     if vc and vc.recording:
         vc.stop_recording()
 
-    # 念のため強制切断
     if vc and vc.is_connected():
         await vc.disconnect(force=True)
         logger.info(f"Disconnected from voice in guild {guild.id}")
 
-# ------------------------------------------------------------
-# 録音完了コールバック
-# ------------------------------------------------------------
-async def finished_callback(sink: MP3Sink, channel: discord.VoiceChannel, *args):
+
+# ─────────────────────────────────────────
+# 録音完了コールバック（非同期）
+# ─────────────────────────────────────────
+async def finished_callback(sink: MP3Sink, channel: discord.VoiceChannel, *_):
     logger.info(f"Recording finished for {channel.name}")
     await process_recording(sink, channel)
 
-# ------------------------------------------------------------
-# 音声 → 文字起こし → 送信
-# ------------------------------------------------------------
-async def process_recording(sink: MP3Sink, channel: discord.VoiceChannel):
-    # 音声データを結合
-    blobs = []
-    for audio in sink.audio_data.values():
-        audio.file.seek(0)
-        blobs.append(audio.file.read())
 
-    if not blobs:
-        logger.warning(f"No audio data recorded for {channel.name}")
+# ─────────────────────────────────────────
+# 録音後処理 → Gemini → Discord
+# ─────────────────────────────────────────
+async def process_recording(sink: MP3Sink, channel: discord.VoiceChannel):
+    # 1) 音声データを結合
+    chunks = []
+    for audio in sink.audio_data.values():
+        try:
+            audio.file.seek(0)
+            chunks.append(audio.file.read())
+        except Exception as e:
+            logger.error(f"Read error: {e}")
+    if not chunks:
+        logger.warning("No audio captured.")
         return
 
-    combined = b"".join(blobs)
-    logger.info(f"Processing {len(combined)} bytes of audio data")
-
+    combined = b"".join(chunks)
     tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
     tmp.write(combined)
     tmp.close()
 
     try:
-        text = await gemini_client.transcribe_audio(tmp.name)
-        summary = await gemini_client.enhance_transcription(text or "")
+        # 2) Gemini で文字起こし + 整形
+        raw = await gemini.transcribe_audio(tmp.name)
+        summary = await gemini.enhance_transcription(raw or "")
+
+        # 3) 指定テキストチャンネルへ送信
+        ch_id = manager.get_channels(channel.guild.id).get("text_channel_id")
+        if ch_id and (dest := bot.get_channel(ch_id)):
+            fp = io.StringIO(summary)
+            await dest.send(
+                f"🎤 **{channel.name}** での録音結果：", file=discord.File(fp, "transcript.txt")
+            )
+    except Exception as e:
+        logger.error("Error in process_recording", exc_info=e)
     finally:
         os.unlink(tmp.name)
 
-    # テキストチャンネルへ送信
-    text_id = config_manager.get_channels(channel.guild.id).get("text_channel_id")
-    if text_id:
-        ch = bot.get_channel(text_id)
-        if ch:
-            f = io.StringIO(summary)
-            await ch.send(file=discord.File(f, filename="transcript.txt"))
 
-# ------------------------------------------------------------
+# ─────────────────────────────────────────
 # エラーハンドラ
-# ------------------------------------------------------------
+# ─────────────────────────────────────────
 @bot.event
 async def on_error(event, *args, **kwargs):
-    logger.error(f"Error in {event}", exc_info=True)
+    logger.error(f"Error in event {event}", exc_info=True)
+
 
 @bot.event
 async def on_application_command_error(ctx, error):
@@ -248,8 +285,10 @@ async def on_application_command_error(ctx, error):
         await ctx.respond(f"❌ コマンドエラー: {error}", ephemeral=True)
     logger.error("Application command error", exc_info=True)
 
-# ------------------------------------------------------------
-# 起動
-# ------------------------------------------------------------
+
+# ─────────────────────────────────────────
+# エントリポイント
+# ─────────────────────────────────────────
 if __name__ == "__main__":
-    bot.run(config.DISCORD_TOKEN)
+    bot.run(cfg.DISCORD_TOKEN)
+
