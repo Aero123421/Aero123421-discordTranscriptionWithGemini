@@ -14,6 +14,7 @@ from typing import Dict
 
 import discord
 from discord.ext import commands
+from discord.utils import MISSING
 
 from config import BotConfig
 from config_manager import ConfigManager
@@ -150,6 +151,21 @@ async def test_command(ctx: discord.ApplicationContext):
 
 
 # ─────────────────────────────────────────
+# 安全切断ユーティリティ
+# ─────────────────────────────────────────
+async def safe_disconnect(vc: discord.VoiceClient):
+    """_MissingSentinel で壊れた VC を安全に破棄"""
+    try:
+        if getattr(vc, "ws", None) in (None, MISSING):
+            # 内部ソケットが壊れている → 直接 close して握手を打ち切る
+            vc.cleanup()
+        elif vc.is_connected():
+            await vc.disconnect(force=True)
+    except Exception as e:
+        logger.error(f"Force-disconnect failed: {e}")
+
+
+# ─────────────────────────────────────────
 # VoiceState 監視
 # ─────────────────────────────────────────
 @bot.event
@@ -186,8 +202,13 @@ async def on_voice_state_update(member: discord.Member, before, after):
 # 録音開始
 # ─────────────────────────────────────────
 async def start_recording(guild: discord.Guild, channel: discord.VoiceChannel):
-    if guild.id in recording_states or guild.voice_client:
+    if guild.id in recording_states:
         return
+    if guild.voice_client:  # 既存 VC がある
+        await safe_disconnect(guild.voice_client)
+        if guild.voice_client.is_connected():  # まだ繋がっていれば戻る
+            logger.warning("VoiceClient still alive; aborting new connect")
+            return
 
     logger.info(f"Attempting to connect to voice channel: {channel.name}")
     vc = await channel.connect()
@@ -216,9 +237,10 @@ async def stop_recording_cleanup(guild: discord.Guild):
         return
 
     vc: discord.VoiceClient = info["voice_client"]
+    if vc and vc.is_playing():
+        vc.stop()
     if vc and vc.recording:
         vc.stop_recording()
-
     if vc and vc.is_connected():
         await vc.disconnect(force=True)
         logger.info(f"Disconnected from voice in guild {guild.id}")
