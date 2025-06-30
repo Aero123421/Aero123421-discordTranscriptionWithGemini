@@ -49,11 +49,6 @@ class MP3Sink(discord.sinks.MP3Sink):
     def __init__(self):
         super().__init__()
 
-class SilenceAudioSource(discord.AudioSource):
-    """音声接続維持用のサイレンス音声"""
-    def read(self) -> bytes:
-        return b'\x00' * 3840
-
 @bot.event
 async def on_ready():
     logger.info(f"Logged in as {bot.user} (ID: {bot.user.id})")
@@ -204,23 +199,13 @@ async def start_recording(guild: discord.Guild, channel: discord.VoiceChannel):
     try:
         logger.info(f"Attempting to connect to voice channel: {channel.name}")
         vc = await channel.connect()
-        
-        # 🔧 Pycord固有の修正：サイレンス音声で接続維持
-        silence_source = SilenceAudioSource()
-        vc.play(silence_source)
-        
         sink = MP3Sink()
         vc.start_recording(sink, finished_callback, channel)
-        recording_states[guild_id] = {
-            'voice_client': vc, 
-            'sink': sink,
-            'silence_source': silence_source
-        }
+        recording_states[guild_id] = {'voice_client': vc, 'sink': sink}
         logger.info(f"Recording started in {channel.name} (Guild: {guild_id})")
         
     except discord.errors.ClientException as e:
         logger.error(f"ClientException in start_recording: {e}")
-        # 既存の録音状態をクリーンアップ
         recording_states.pop(guild_id, None)
     except Exception as e:
         logger.error(f"Unexpected error in start_recording: {e}")
@@ -238,13 +223,6 @@ async def stop_recording_cleanup(guild: discord.Guild):
                 logger.info(f"Recording stopped for guild {guild_id}")
             except Exception as e:
                 logger.error(f"Error stopping recording: {e}")
-        
-        # サイレンス音声停止
-        if vc and vc.is_playing():
-            try:
-                vc.stop()
-            except Exception as e:
-                logger.error(f"Error stopping silence audio: {e}")
 
 # ✅ 修正: 非同期コルーチンに変更（Pycord対応）
 async def finished_callback(sink: MP3Sink, channel: discord.VoiceChannel, *args):
@@ -264,25 +242,32 @@ async def process_recording(sink: MP3Sink, channel: discord.VoiceChannel):
     
     # 音声クライアント切断
     if info and info['voice_client']:
-        vc = info['voice_client']
         try:
-            # サイレンス音声停止
-            if vc.is_playing():
-                vc.stop()
-            
-            # 音声クライアント切断
-            await vc.disconnect()
+            await info['voice_client'].disconnect()
             logger.info(f"Disconnected from voice channel in {guild.name}")
         except Exception as e:
             logger.error(f"Error disconnecting from voice: {e}")
     
-    # 音声データ結合
-    combined_audio = b"".join(buf.getvalue() for buf in sink.audio_data.values())
-    if not combined_audio:
+    # ✅ Pycord用修正: AudioDataオブジェクトから.fileを使用
+    audio_files = []
+    for user_id, audio in sink.audio_data.items():
+        try:
+            # audio.fileから音声データを読み取り
+            audio.file.seek(0)  # ファイル先頭に移動
+            audio_data = audio.file.read()
+            if audio_data:
+                audio_files.append(audio_data)
+                logger.debug(f"Read {len(audio_data)} bytes from user {user_id}")
+        except Exception as e:
+            logger.error(f"Error reading audio data for user {user_id}: {e}")
+    
+    if not audio_files:
         logger.warning(f"No audio data recorded for {channel.name}")
         return
     
-    logger.info(f"Processing {len(combined_audio)} bytes of audio data")
+    # 音声データ結合
+    combined_audio = b"".join(audio_files)
+    logger.info(f"Processing {len(combined_audio)} bytes of combined audio data")
     
     # 一時ファイル作成
     tmp_file = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
@@ -345,3 +330,4 @@ if __name__ == "__main__":
         bot.run(config.DISCORD_TOKEN)
     except Exception as e:
         logger.error(f"Failed to start bot: {e}")
+
