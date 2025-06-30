@@ -1,4 +1,3 @@
-# gemini_client.py
 import asyncio
 import logging
 import mimetypes
@@ -8,82 +7,80 @@ from google import genai
 
 logger = logging.getLogger(__name__)
 
-class GeminiClient:
-    def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash",
-                 thinking_budget: int = -1):
-        # 環境変数経由で API キーを設定
-        os.environ["GEMINI_API_KEY"] = api_key
 
-        self.client = genai.Client()
+class GeminiClient:
+    """
+    Google Gemini 公式 Python SDK(v0.3 以降) 用ラッパー
+    """
+
+    def __init__(self, api_key: str, model_name: str, thinking_budget: int = -1):
+        os.environ["GEMINI_API_KEY"] = api_key          # SDK は環境変数でキーを読む
+        self.client = genai.Client()                    # <<< 新しい初期化方法[16]
         self.model_name = model_name
         self.thinking_budget = thinking_budget
         logger.info(f"Initialized GeminiClient with model {model_name}")
 
-    # ------------------------------------------------------------------
-    # 音声ファイル文字起こし
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ #
+    # 音声 → 文字起こし
+    # ------------------------------------------------------------------ #
     async def transcribe_audio(self, audio_path: str) -> str | None:
         if not os.path.exists(audio_path):
             logger.warning(f"Audio path not found: {audio_path}")
             return None
 
+        # 1) 音声ファイルをアップロード（Files API）
         loop = asyncio.get_event_loop()
-        mime = mimetypes.guess_type(audio_path)[0] or "audio/mpeg"
-
-        # ① ファイルをアップロードし URI を取得
-        file = await loop.run_in_executor(
-            None, lambda: genai.upload_file(audio_path, mime_type=mime)
+        uploaded_file = await loop.run_in_executor(
+            None,
+            lambda: self.client.files.upload(              # <<< SDK v0.3 方式[16]
+                file=audio_path,
+                config={"mime_type": mimetypes.guess_type(audio_path)[0] or "audio/mpeg"}
+            )
         )
 
-        # ② アップロードが ACTIVE になるまで待機
-        while True:
-            meta = await loop.run_in_executor(
-                None, lambda: self.client.get_file(name=file.name)
-            )
-            if meta.state == "ACTIVE":
-                break
-            await asyncio.sleep(0.4)
-
-        # ③ file_uri / mime_type を付けて generate_content
-        part = {"file_data": {"file_uri": meta.uri, "mime_type": mime}}
-        resp = await loop.run_in_executor(
+        # 2) transcription 用プロンプト実行
+        prompt = "音声を日本語で文字起こししてください。"
+        response = await loop.run_in_executor(
             None,
             lambda: self.client.models.generate_content(
                 model=self.model_name,
-                contents=[{"role": "user", "parts": [part]}],
-            ),
+                contents=[prompt, uploaded_file]           # ファイルをそのまま parts に渡す[16]
+            )
         )
-        return getattr(resp, "text", None)
 
-    # ------------------------------------------------------------------
+        return getattr(response, "text", None)
+
+    # ------------------------------------------------------------------ #
     # 文字起こし結果の整形
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ #
     async def enhance_transcription(self, raw: str) -> str:
         if not raw:
             return raw
 
-        prompt = f"以下の文字起こしテキストを読みやすく整形してください。\n\n{raw}"
         loop = asyncio.get_event_loop()
-        resp = await loop.run_in_executor(
+        instr = (
+            "次のテキストは会議の文字起こしです。"
+            "体裁を整えて、話者を推定・付与し、読みやすくしてください。"
+        )
+        response = await loop.run_in_executor(
             None,
             lambda: self.client.models.generate_content(
                 model=self.model_name,
-                contents=prompt,
+                contents=[instr, raw],
             ),
         )
-        return getattr(resp, "text", raw)
+        return getattr(response, "text", raw)
 
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ #
     # 疎通確認
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ #
     async def test_connection(self) -> bool:
         loop = asyncio.get_event_loop()
         try:
             resp = await loop.run_in_executor(
                 None,
                 lambda: self.client.models.generate_content(
-                    model=self.model_name,
-                    contents="ping",
+                    model=self.model_name, contents="ping"
                 ),
             )
             return bool(getattr(resp, "text", None))
