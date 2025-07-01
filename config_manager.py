@@ -1,47 +1,32 @@
 import json
 import logging
-import os
 from pathlib import Path
-from cryptography.fernet import Fernet
 
 logger = logging.getLogger(__name__)
 
 class ConfigManager:
-    def __init__(self, config_file="channels.json", key_file="encryption.key"):
+    def __init__(self, config_file="channels.json"):
         self.cf = Path(config_file)
-        self.kf = Path(key_file)
         self._cleanup()
-        self.fernet = self._load_or_create_key()
         self.data = self._load_config()
 
     def _cleanup(self):
-        for p in (self.cf, self.kf):
-            if p.exists() and p.is_dir():
-                import shutil; shutil.rmtree(p)
-
-    def _load_or_create_key(self):
-        if self.kf.exists() and self.kf.is_file():
-            key = self.kf.read_bytes() or Fernet.generate_key()
-        else:
-            key = Fernet.generate_key()
-            self.kf.write_bytes(key)
-            os.chmod(self.kf, 0o600)
-        logger.info("Encryption key loaded")
-        return Fernet(key)
+        if self.cf.exists() and self.cf.is_dir():
+            import shutil; shutil.rmtree(self.cf)
 
     def _load_config(self):
-        if not self.cf.exists() or self.cf.is_dir():
+        if not self.cf.exists() or self.cf.is_dir() or self.cf.stat().st_size == 0:
             return {}
-        raw = self.cf.read_bytes()
-        if not raw:
+        try:
+            with self.cf.open("r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            logger.warning(f"Could not decode {self.cf}, starting with a new config.")
             return {}
-        dec = self.fernet.decrypt(raw)
-        return json.loads(dec)
 
     def _save(self):
-        enc = self.fernet.encrypt(json.dumps(self.data).encode())
-        self.cf.write_bytes(enc)
-        os.chmod(self.cf, 0o600)
+        with self.cf.open("w", encoding="utf-8") as f:
+            json.dump(self.data, f, indent=4)
 
     def set_voice_category(self, guild_id, cat_id):
         self.data.setdefault(str(guild_id), {})["voice_category_id"] = cat_id

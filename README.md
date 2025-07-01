@@ -1,256 +1,138 @@
-# Discord Transcription AI Bot
+# Discord文字起こしAI Bot
 
-本リポジトリは Discord のボイスチャンネルでの発言を録音し、**Google Gemini 2.5 Flash API** を用いて文字起こし・整形を行う Bot の実装です。
-設定したテキストチャンネルへ結果を自動投稿できます。
+このリポジトリは、Discordのボイスチャンネルでの会話を録音し、**Google Gemini API** を使用して文字起こしを行うBotです。結果は設定されたテキストチャンネルに自動的に投稿されます。
 
 ## 🎯 主な機能
 
-- **自動録音機能**: 指定した**ボイスカテゴリ**または**個別ボイスチャンネル**へのユーザーの参加・退出を検知し、自動で録音を開始・終了します
-- **カテゴリベース録音**: カテゴリ内のいずれかのボイスチャンネルでアクティビティがあった場合に録音が行われます
-- **高品質文字起こし**: **Google Gemini 2.5 Flash API** を利用して音声データを文字起こしします
-- **AI整形機能**: Gemini 2.5 Flash の思考機能を使ったテキスト整形も可能です
-- **自動投稿**: 文字起こし結果を指定されたテキストチャンネルに **`.txt` ファイル形式**で投稿します
-- **暗号化設定管理**: `config_manager.py` によりチャンネル設定を暗号化して `channels.json` に保存し、サーバーごとに永続化します
-- **環境変数管理**: `.env` または環境変数で設定を管理（Pydantic 使用）
-- **Docker対応**: Docker / Docker Compose を利用した簡単なデプロイ
+- **自動録音**: 指定されたボイスチャンネルでのユーザーの出入りを検知し、自動で録音を開始・終了します。
+- **高品質な文字起こし**: **Google Gemini API** を利用して、正確な音声からテキストへの変換を実現します。
+- **AIによる整形**: Geminiの能力を活用し、読みやすいように文字起こし結果を整形することも可能です。
+- **自動投稿**: 文字起こし結果を `.txt` ファイルとして指定のテキストチャンネルに投稿します。
+- **シンプルな設定管理**: サーバーごとの設定を `channels.json` ファイルで管理します。
+- **環境変数による管理**: `.env` ファイルで簡単に設定を行えます。
 
 ## 📋 必要なもの
 
+- **Python 3.9 以上**
+- **ffmpeg** のインストール
 - **Discord Bot トークン**
 - **Google Gemini API キー**
-- **Docker と Docker Compose** (または Python 3.11 環境と ffmpeg)
 
 ## 🚀 セットアップ
 
-### 1. Discord Bot の作成
+### 1. Discord Botの作成
 
-1. [Discord Developer Portal](https://discord.com/developers/applications) にアクセス
-2. "New Application" をクリックして新しいアプリケーションを作成
-3. 左メニューの "Bot" をクリック
-4. "Add Bot" をクリックしてボットを作成
-5. "Token" をコピーして保存
-6. "Privileged Gateway Intents" で以下を有効化：
+1. [Discord Developer Portal](https://discord.com/developers/applications)にアクセスします。
+2. 「New Application」をクリックして新しいアプリケーションを作成します。
+3. 「Bot」タブに移動し、「Add Bot」をクリックします。
+4. Botの**トークン**をコピーします。
+5. 以下の **Privileged Gateway Intents** を有効にします:
    - **Message Content Intent**
-   - **Server Members Intent** 
-   - **Voice States Intent** （重要）
+   - **Server Members Intent**
+   - **Voice State Intent** (重要)
 
-### 2. Google Gemini API キーの取得
+### 2. Google Gemini APIキーの取得
 
-1. [Google AI Studio](https://aistudio.google.com/) にアクセス
-2. Google アカウントでログイン
-3. "Get API key" をクリック
-4. 新しいAPIキーを作成してコピー
+1. [Google AI Studio](https://aistudio.google.com/)にアクセスします。
+2. Googleアカウントでサインインします。
+3. 「Get API key」をクリックして新しいAPIキーを作成します。
 
 ### 3. 環境設定
 
-リポジトリをクローンし、環境変数を設定します：
+リポジトリをクローンし、環境変数を設定します。
 
 ```bash
-git clone <repository-url>
-cd discord-transcription-bot
+git clone <リポジトリURL>
+cd <リポジトリフォルダ>
+pip install -r requirements.txt
 cp .env.example .env
 ```
 
-`.env` ファイルを編集して以下の値を設定：
+`.env` ファイルを編集して、以下の値を設定します。
 
 ```env
 # Discord Bot設定
-DISCORD_TOKEN=your_discord_bot_token_here
+DISCORD_TOKEN=ここにDiscordボットトークンを入力
 
-# Google Gemini API設定  
-GEMINI_API_KEY=your_gemini_api_key_here
-GEMINI_MODEL_NAME=gemini-2.5-flash
+# Google Gemini API設定
+GEMINI_API_KEY=ここにGemini APIキーを入力
+GEMINI_MODEL_NAME=gemini-1.5-flash
 
-# Gemini 2.5 Flash思考機能設定
-GEMINI_THINKING_BUDGET=-1  # -1=動的思考（推奨）, 0=思考オフ, 正の整数=トークン数
+# Gemini思考予算
+GEMINI_THINKING_BUDGET=-1  # -1=動的(推奨), 0=オフ, 正の整数=トークン数
 ```
 
-### 4. デプロイ方法
-
-#### Docker Compose で起動（推奨）
+### 4. Botの実行
 
 ```bash
-# サービス起動
-docker-compose up -d
-
-# ログ確認
-docker-compose logs -f discord-transcription-bot
-
-# サービス停止
-docker-compose down
-```
-
-#### Python 直接実行
-
-```bash
-# 依存関係インストール
-pip install -r requirements.txt
-
-# Bot起動
 python main.py
 ```
 
-**注意**: Python直接実行の場合、事前に `ffmpeg` をシステムにインストールしてください。
+**注意**: `ffmpeg` がシステムにインストールされ、PATHが通っていることを確認してください。
 
 ## 💬 使い方
 
-Bot 起動後、Discord サーバーで以下のスラッシュコマンドを使用して設定を行います：
+Botが起動したら、Discordサーバーで以下のスラッシュコマンドを使用して設定を行います。
 
 ### スラッシュコマンド一覧
 
 | コマンド | 説明 | 権限 |
-|---------|------|------|
-| `/set_voice_category` | 録音対象とするボイスチャンネルの**カテゴリ**を設定 | 全ユーザー |
-| `/set_text_channel` | 文字起こし結果（`.txt`ファイル）を送信するテキストチャンネルを設定 | 全ユーザー |
-| `/show_channels` | 現在設定されている録音対象と結果送信チャンネルを表示 | 全ユーザー |
-| `/unset_channels` | 現在のサーバーで設定されているチャンネル情報をすべて解除 | 全ユーザー |
-| `/stop` | 現在進行中の録音を手動で停止（デバッグ・緊急停止用） | **管理者のみ** |
+|---|---|---|
+| `/set_voice_category` | 録音対象のボイスチャンネルカテゴリを設定します。 | 全員 |
+| `/set_text_channel` | 文字起こし結果を送信するテキストチャンネルを設定します。 | 全員 |
+| `/show_channels` | 現在設定されているチャンネルを表示します。 | 全員 |
+| `/unset_channels` | サーバーのチャンネル設定をすべて解除します。 | 全員 |
+| `/stop` | 進行中の録音を手動で停止します。 | **管理者のみ** |
 
 ### 設定例
 
-1. **カテゴリ設定**:
+1. **カテゴリの設定**:
    ```
-   /set_voice_category category:会議室カテゴリ
-   ```
-
-2. **結果送信チャンネル設定**:
-   ```
-   /set_text_channel channel:#transcripts
+   /set_voice_category category:会議室
    ```
 
-3. **設定確認**:
+2. **結果を送信するチャンネルの設定**:
+   ```
+   /set_text_channel channel:#文字起こし結果
+   ```
+
+3. **設定の確認**:
    ```
    /show_channels
    ```
-
-## 🔧 Gemini 2.5 Flash 設定
-
-### モデル特徴
-
-- **高速処理**: 従来のFlashモデルより高速
-- **思考機能**: 複雑な文字起こしでも論理的に処理
-- **コスト効率**: 優れた価格性能比
-- **多言語対応**: 日本語を含む24+言語に対応
-
-### 思考機能設定 (`GEMINI_THINKING_BUDGET`)
-
-| 値 | 説明 | 用途 |
-|----|------|------|
-| `0` | 思考機能オフ | 最高速・最低コスト |
-| `-1` | 動的思考（推奨） | バランス重視 |
-| `1-24576` | 固定トークン数 | 品質重視 |
 
 ## 📁 ファイル構成
 
 ```
 discord-transcription-bot/
-├── main.py                 # メインBotファイル
+├── main.py                 # メインのBotファイル
 ├── config.py              # Pydantic設定管理
-├── config_manager.py      # 暗号化設定管理
-├── gemini_client.py       # Gemini 2.5 Flash APIクライアント
+├── config_manager.py      # 設定管理 (JSON)
+├── gemini_client.py       # Gemini APIクライアント
 ├── requirements.txt       # Python依存関係
-├── Dockerfile            # Docker設定
-├── docker-compose.yml    # Docker Compose設定
 ├── .env.example          # 環境変数テンプレート
-├── .gitignore           # Git除外設定
+├── .gitignore           # Git無視設定
 ├── README.md            # このファイル
-└── data/                # 設定ファイル保存ディレクトリ
-    ├── channels.json    # 暗号化された設定（自動生成）
-    └── config.key       # 暗号化キー（自動生成）
+└── channels.json        # サーバー設定 (自動生成)
 ```
-
-## 🔒 セキュリティ機能
-
-- **設定暗号化**: Fernet暗号化による設定ファイル保護
-- **環境変数管理**: 機密情報を環境変数で管理
-- **ファイル権限制限**: 設定ファイルのアクセス権限を制限
-- **非rootユーザー実行**: Dockerコンテナは非特権ユーザーで実行
-
-## 📝 ログ機能
-
-- **構造化ログ**: レベル別のログ出力
-- **ローテーション**: Docker Composeでログローテーション設定済み
-- **デバッグ**: `LOG_LEVEL=DEBUG` で詳細ログ表示
 
 ## ⚠️ 注意事項
 
 ### プライバシーとコンプライアンス
-- **録音の同意**: ボイスチャンネルでの録音について事前に参加者の同意を得てください
-- **Discord利用規約**: Discord の利用規約に従って使用してください
-- **データ保護**: 録音データは一時的に保存され、処理後に自動削除されます
+- **同意の取得**: ボイスチャンネルを録音する前に、必ず参加者から同意を得てください。
+- **Discord利用規約**: このBotはDiscordの利用規約に従って使用してください。
+- **データ取扱い**: 録音データは処理のために一時的に保存され、自動的に削除されます。
 
-### 技術的制限
-- **ファイルサイズ**: 音声ファイルは20MB以下
-- **API制限**: Gemini APIの使用量制限に注意
-- **同時録音**: サーバーごとに1つの録音セッションのみ
-
-## 🛠️ トラブルシューティング
-
-### よくある問題
-
-#### 1. Bot がボイスチャンネルに接続できない
-- **権限確認**: Bot に「ボイスチャンネルに接続」「音声を聞く」権限があるか確認
-- **チャンネル設定**: カテゴリにボイスチャンネルが存在するか確認
-
-#### 2. 文字起こしが動作しない
-- **API キー**: Gemini API キーが正しく設定されているか確認
-- **使用量制限**: API の使用量制限に達していないか確認
-- **ファイルサイズ**: 録音ファイルが20MB以下か確認
-
-#### 3. Docker 起動エラー
-```bash
-# ログ確認
-docker-compose logs discord-transcription-bot
-
-# コンテナ再起動
-docker-compose restart discord-transcription-bot
-
-# 完全リビルド
-docker-compose down
-docker-compose build --no-cache
-docker-compose up -d
-```
-
-### ログ確認方法
-
-```bash
-# リアルタイムログ表示
-docker-compose logs -f discord-transcription-bot
-
-# 最新100行表示
-docker-compose logs --tail=100 discord-transcription-bot
-```
-
-## 🔄 アップデート手順
-
-```bash
-# 最新コードを取得
-git pull origin main
-
-# サービス停止
-docker-compose down
-
-# イメージ再ビルド
-docker-compose build --no-cache
-
-# サービス再起動
-docker-compose up -d
-```
-
-## 🤝 貢献
-
-プルリクエストやイシューの報告を歓迎します。バグ報告や機能追加の提案は GitHub Issues をご利用ください。
-
-## 📄 ライセンス
-
-MIT License - 詳細は [LICENSE](LICENSE) ファイルを参照してください。
+### 技術的な制限
+- **ファイルサイズ**: 音声ファイルはGemini APIの制限に従います（現在、音声ファイルは1時間の制限があります）。
+- **API制限**: Gemini APIの使用量制限にご注意ください。
+- **同時録音**: サーバーごとに1つの録音セッションのみサポートされます。
 
 ## 🙏 謝辞
 
-- [Pycord](https://github.com/Pycord-Development/pycord) - Discord API ラッパー
-- [Google Gemini](https://ai.google.dev/) - AI 文字起こし API
-- [Cryptography](https://cryptography.io/) - 暗号化ライブラリ
+- [Pycord](https://github.com/Pycord-Development/pycord) - Discord APIラッパー
+- [Google Gemini](https://ai.google.dev/) - AI文字起こしAPI
 
 ---
 
-**⚡ Powered by Google Gemini 2.5 Flash**
+**⚡ Powered by Google Gemini**

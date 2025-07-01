@@ -49,7 +49,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 gemini = GeminiClient(
     api_key=cfg.GEMINI_API_KEY,
     model_name=cfg.GEMINI_MODEL_NAME,
-    thinking_budget=cfg.GEMINI_THINKING_BUDGET,
+    concurrency=cfg.GEMINI_API_CONCURRENCY,
 )
 
 # ─────────────────────────────────────────

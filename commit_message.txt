@@ -1,0 +1,5 @@
+feat: Simplify project setup and enhance Gemini integration
+
+- Remove Docker and cryptography dependencies for a simpler setup.
+- Implement rate limiting and retry logic for Gemini API calls.
+- Improve transcription and formatting prompts for academic lectures.
